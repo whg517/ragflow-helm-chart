@@ -1,0 +1,12 @@
+# Packaged charts
+*.tgz
+
+# Helm rendering scratch output
+*.rendered.yaml
+
+# Local overrides
+values.local.yaml
+ci/*-local.yaml
+
+# OS / editor
+.DS_Store

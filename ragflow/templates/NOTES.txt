@@ -1,0 +1,43 @@
+RAGFlow {{ .Chart.AppVersion }} deployed as release {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+Workloads:
+{{- if .Values.api.enabled }}
+  api        Deployment   {{ if .Values.api.autoscaling.enabled }}HPA {{ .Values.api.autoscaling.minReplicas }}-{{ .Values.api.autoscaling.maxReplicas }}{{ else }}{{ .Values.api.replicaCount }} replica(s){{ end }}
+{{- end }}
+{{- if .Values.executor.enabled }}
+  executor   StatefulSet  {{ if .Values.executor.autoscaling.enabled }}HPA {{ .Values.executor.autoscaling.minReplicas }}-{{ .Values.executor.autoscaling.maxReplicas }}{{ else }}{{ .Values.executor.replicaCount }} replica(s){{ end }} x {{ .Values.executor.workers }} worker(s)
+{{- end }}
+{{- if .Values.datasync.enabled }}
+  datasync   Deployment   1 replica (singleton, do not scale)
+{{- end }}
+
+External dependencies in use:
+  metadata db   {{ .Values.metadataDb.type }} @ {{ .Values.metadataDb.host }}:{{ .Values.metadataDb.port }}
+  redis         {{ .Values.redis.host }}:{{ .Values.redis.port }}
+  doc engine    {{ .Values.docEngine.type }}
+  storage       {{ .Values.storage.type }}
+
+Access:
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "ragflow.componentName" (dict "root" . "component" "api") }} 8080:{{ .Values.api.service.port }}
+  then open http://localhost:8080
+{{- end }}
+
+Verify health (checks db, redis, doc_engine and storage; 200 only when all pass):
+  kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "ragflow.componentName" (dict "root" . "component" "api") }} -- \
+    curl -sf localhost/api/v1/system/healthz
+
+{{- if not .Values.existingSecret }}
+
+WARNING: credentials were rendered from `secretData` into a chart-managed
+Secret. For production, pre-create a Secret and set `existingSecret` instead.
+{{- end }}
+{{- if and .Values.executor.autoscaling.enabled (not .Values.executor.autoscaling.targetCPUUtilizationPercentage) }}
+
+NOTE: executor HPA is enabled without a CPU target. Queue-depth scaling needs
+KEDA; CPU alone is a poor proxy for parsing backlog.
+{{- end }}

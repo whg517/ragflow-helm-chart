@@ -1,0 +1,433 @@
+# =============================================================================
+# RAGFlow production chart values
+#
+# Design: all stateful dependencies (metadata DB, Redis, object storage, doc
+# engine) are EXTERNAL. This chart manages only the three RAGFlow workloads.
+# =============================================================================
+
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+commonLabels: {}
+
+image:
+  registry: ""
+  repository: infiniflow/ragflow
+  # Defaults to .Chart.AppVersion when empty.
+  tag: ""
+  # Pin by digest for immutable production deploys. Takes precedence over tag.
+  digest: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+# -----------------------------------------------------------------------------
+# Credentials
+#
+# STRONGLY RECOMMENDED: pre-create a Secret and set existingSecret to its name.
+# The chart never needs to see plaintext passwords that way.
+#
+# Required keys in the Secret:
+#   MYSQL_PASSWORD        (or the matching var for your metadataDb.type)
+#   MINIO_PASSWORD        / storage credentials
+#   REDIS_PASSWORD
+#   ELASTIC_PASSWORD | OPENSEARCH_PASSWORD  (only for that doc engine)
+#
+# Set existingSecret="" and fill `secretData` ONLY for throwaway environments.
+# -----------------------------------------------------------------------------
+existingSecret: ""
+secretData: {}
+#   MYSQL_PASSWORD: changeme
+#   REDIS_PASSWORD: changeme
+#   MINIO_PASSWORD: changeme
+
+# -----------------------------------------------------------------------------
+# Metadata database (external)
+# Supported types come from api/db/db_models.py PooledDatabase:
+#   mysql | postgres | oceanbase | gaussdb
+# -----------------------------------------------------------------------------
+metadataDb:
+  type: mysql
+  host: ""
+  # Leave empty to get the right default for `type`:
+  #   mysql 3306 | postgres 5432 | gaussdb 5432 | oceanbase 2881
+  # Hardcoding 3306 here would silently follow you when switching to postgres.
+  port: ""
+  user: root
+  database: rag_flow
+  # NOTE: the password is NEVER set here. Every backend — including postgres
+  # and oceanbase — reads it from MYSQL_PASSWORD in the Secret named by
+  # `existingSecret`. For postgres/oceanbase an initContainer renders
+  # local.service_conf.yaml from that env var at pod startup, because
+  # entrypoint.sh does not interpolate ${VAR} in that file.
+  postgres:
+    maxConnections: 100
+    staleTimeout: 30
+  # For type=gaussdb the app reads GAUSSDB_METADATA_* env vars instead of
+  # service_conf; the chart maps these fields onto them automatically.
+  gaussdb:
+    schema: public
+    maxConnections: 100
+    staleTimeout: 30
+
+# -----------------------------------------------------------------------------
+# Redis / Valkey (external) — task queue + cache
+# -----------------------------------------------------------------------------
+redis:
+  host: ""
+  port: 6379
+  username: ""
+  db: 1
+
+# -----------------------------------------------------------------------------
+# Object storage (external) — MinIO or any S3-compatible endpoint
+# -----------------------------------------------------------------------------
+storage:
+  # minio | s3 | oss | azure | gcs
+  type: minio
+  minio:
+    host: ""
+    port: 9000
+    user: rag_flow
+    secure: false
+    bucket: ""
+
+# -----------------------------------------------------------------------------
+# Document / vector engine (external)
+# infinity is the lightest; elasticsearch/opensearch need their own clusters.
+# -----------------------------------------------------------------------------
+docEngine:
+  type: infinity
+  infinity:
+    host: ""
+  elasticsearch:
+    host: ""
+    port: 9200
+    user: elastic
+  opensearch:
+    host: ""
+    port: 9201
+    user: admin
+
+# -----------------------------------------------------------------------------
+# Shared, non-secret application env
+# -----------------------------------------------------------------------------
+env:
+  TZ: Asia/Shanghai
+  DOC_BULK_SIZE: "4"
+  EMBEDDING_BATCH_SIZE: "16"
+  # Uncomment where huggingface.co is unreachable:
+  # HF_ENDPOINT: https://hf-mirror.com
+
+extraEnv: {}
+extraEnvFrom: []
+
+# Optional override mounted at /ragflow/conf/local.service_conf.yaml
+serviceConf: {}
+# Optional override mounted at /ragflow/conf/llm_factories.json
+llmFactories: {}
+
+# -----------------------------------------------------------------------------
+# Pod-level security. Defaults satisfy the PSA "restricted" profile.
+# -----------------------------------------------------------------------------
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: ["ALL"]
+
+# =============================================================================
+# Workload: api  (nginx + ragflow_server)
+# Stateless. Scale freely.
+# =============================================================================
+api:
+  enabled: true
+  replicaCount: 2
+
+  # Admin server listens on 9381 and is proxied at /api/v1/admin.
+  # Disable unless you actually use it — it is an unauthenticated-by-default
+  # control surface in some versions.
+  adminServer:
+    enabled: false
+    port: 9381
+
+  # Runs the DB schema migration on startup. Exactly ONE workload should do
+  # this; the pre-install/pre-upgrade Job handles it instead by default.
+  initSuperuser: false
+
+  service:
+    type: ClusterIP
+    port: 80
+    apiPort: 9380
+    annotations: {}
+
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    behavior: {}
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+
+  livenessProbe:
+    enabled: true
+    # /api/v1/system/ping returns "pong" without touching dependencies, so a
+    # transient DB blip won't get the container killed.
+    httpGet:
+      path: /api/v1/system/ping
+      port: http
+    initialDelaySeconds: 60
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 6
+
+  readinessProbe:
+    enabled: true
+    # /api/v1/system/healthz verifies db + redis + doc_engine + storage and
+    # returns 500 unless all four are ok.
+    httpGet:
+      path: /api/v1/system/healthz
+      port: http
+    initialDelaySeconds: 20
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  startupProbe:
+    enabled: true
+    httpGet:
+      path: /api/v1/system/ping
+      port: http
+    initialDelaySeconds: 20
+    periodSeconds: 10
+    timeoutSeconds: 5
+    # Allows up to 10 minutes for first boot (schema init can be slow).
+    failureThreshold: 60
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  podAnnotations: {}
+  extraVolumes: []
+  extraVolumeMounts: []
+
+# =============================================================================
+# Workload: executor  (task_executor.py)
+# StatefulSet: consumer names derive from hostname, and stable identities keep
+# the Redis consumer group clean across restarts and scale-downs.
+# =============================================================================
+executor:
+  enabled: true
+  replicaCount: 2
+
+  # Task executor processes per pod. Total concurrency = replicaCount * workers.
+  workers: 1
+
+  service:
+    # Headless service backing the StatefulSet.
+    annotations: {}
+
+  resources:
+    requests:
+      cpu: "2"
+      memory: 4Gi
+    limits:
+      cpu: "8"
+      memory: 16Gi
+
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 70
+    # Queue-depth scaling needs KEDA; see values-keda.yaml example.
+    behavior: {}
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  updateStrategy:
+    type: RollingUpdate
+
+  # Document parsing can run long; give in-flight tasks time to finish.
+  terminationGracePeriodSeconds: 300
+
+  livenessProbe:
+    enabled: true
+    # No HTTP surface on the executor, so check the process is alive.
+    exec:
+      command:
+        - /bin/sh
+        - -c
+        # The [r] character class stops pgrep matching this probe's own
+        # command line, which would make the probe always succeed.
+        - pgrep -f "[r]ag/svr/task_executor.py" > /dev/null
+    initialDelaySeconds: 90
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 4
+
+  readinessProbe:
+    enabled: false
+
+  startupProbe:
+    enabled: true
+    exec:
+      command:
+        - /bin/sh
+        - -c
+        # The [r] character class stops pgrep matching this probe's own
+        # command line, which would make the probe always succeed.
+        - pgrep -f "[r]ag/svr/task_executor.py" > /dev/null
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    failureThreshold: 60
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  podAnnotations: {}
+  extraVolumes: []
+  extraVolumeMounts: []
+
+# =============================================================================
+# Workload: datasync  (sync_data_source.py)
+# SINGLETON. rag/svr/sync_data_source.py holds no distributed lock, so two
+# replicas would double-sync. replicas is fixed at 1 and the strategy is
+# Recreate so a rolling update never briefly runs two.
+# =============================================================================
+datasync:
+  enabled: true
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+  terminationGracePeriodSeconds: 120
+
+  livenessProbe:
+    enabled: true
+    exec:
+      command:
+        - /bin/sh
+        - -c
+        # See the executor probe: [r] prevents self-matching.
+        - pgrep -f "[r]ag/svr/sync_data_source.py" > /dev/null
+    initialDelaySeconds: 90
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 4
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  extraVolumes: []
+  extraVolumeMounts: []
+
+# =============================================================================
+# Schema migration Job (pre-install / pre-upgrade hook)
+# Keeps DDL out of the request-serving pods so N api replicas don't race.
+# =============================================================================
+migration:
+  enabled: true
+  initModelProviderTables: true
+  backoffLimit: 3
+  # Bounded so a misconfiguration (e.g. existingSecret naming a Secret that does
+  # not exist) fails in minutes instead of blocking `helm install` for half an
+  # hour. Raise it if you have a genuinely long-running schema migration.
+  activeDeadlineSeconds: 300
+  resources:
+    requests:
+      cpu: "500m"
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+
+# =============================================================================
+# Ingress
+# =============================================================================
+ingress:
+  enabled: false
+  className: nginx
+  annotations:
+    # Uploads default to a 128M cap in the app.
+    nginx.ingress.kubernetes.io/proxy-body-size: "128m"
+    # Chat streams over SSE.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+  hosts:
+    - host: ragflow.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# =============================================================================
+# NetworkPolicy
+# =============================================================================
+networkPolicy:
+  enabled: false
+  # Sources allowed to reach the api service.
+  ingressFrom: []
+  #  - namespaceSelector:
+  #      matchLabels:
+  #        kubernetes.io/metadata.name: ingress-nginx
+  # Egress destinations. Leave empty to allow all egress (LLM APIs often need it).
+  egressTo: []
+  allowAllEgress: true
+
+# =============================================================================
+# Prometheus Operator integration
+# =============================================================================
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+  path: /metrics

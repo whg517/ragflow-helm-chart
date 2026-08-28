@@ -1,0 +1,21 @@
+{{- /*
+Non-secret config only. local.service_conf.yaml is rendered into the Secret
+instead, because for postgres/oceanbase it must contain a literal password:
+entrypoint.sh expands ${VAR} only inside service_conf.yaml.template, never
+inside local.service_conf.yaml.
+*/}}
+{{- if .Values.llmFactories }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ragflow.fullname" . }}-service-conf
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  llm_factories.json: |
+    {{- toPrettyJson .Values.llmFactories | nindent 4 }}
+{{- end }}

@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "ragflow.fullname" . }}-test-health"
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  {{- include "ragflow.imagePullSecrets" . | nindent 2 }}
+  {{- include "ragflow.podSecurityContext" . | nindent 2 }}
+  containers:
+    - name: health
+      {{- /* Reuse the app image rather than pulling curlimages/curl: it already
+             ships /usr/bin/curl, it is guaranteed to be present (every workload
+             runs it), and it respects global.imageRegistry for air-gapped
+             clusters. */}}
+      image: {{ include "ragflow.image" . }}
+      imagePullPolicy: {{ .Values.image.pullPolicy }}
+      {{- include "ragflow.containerSecurityContext" . | nindent 6 }}
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          URL="http://{{ include "ragflow.componentName" (dict "root" . "component" "api") }}:{{ .Values.api.service.port }}"
+          echo "checking $URL/api/v1/system/ping"
+          curl -sf "$URL/api/v1/system/ping" | grep -q pong
+          echo "ping ok"
+          echo "checking $URL/api/v1/system/healthz"
+          # Returns 500 unless db, redis, doc_engine and storage are all ok.
+          curl -sf "$URL/api/v1/system/healthz"
+          echo ""
+          echo "healthz ok"

@@ -1,0 +1,74 @@
+{{- if .Values.migration.enabled }}
+{{- $component := "migration" }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ragflow.componentName" (dict "root" . "component" $component) }}
+  labels:
+    {{- include "ragflow.componentLabels" (dict "root" . "component" $component) | nindent 4 }}
+  annotations:
+    {{- /* Runs before the workloads on every install and upgrade, so schema
+           DDL happens exactly once instead of racing across N api replicas.
+           entrypoint.sh calls ensure_db_init() unconditionally, but a single
+           serialized run up front avoids concurrent CREATE TABLE. */}}
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migration.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "ragflow.componentLabels" (dict "root" . "component" $component) | nindent 8 }}
+      {{- with .Values.migration.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "ragflow.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- include "ragflow.imagePullSecrets" . | nindent 6 }}
+      {{- include "ragflow.podSecurityContext" . | nindent 6 }}
+      {{- with .Values.migration.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.migration.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- /* Fails fast with a message that names the missing key, instead of
+               letting it surface as a late crash. */}}
+        {{- include "ragflow.preflightInitContainer" . | nindent 8 }}
+        {{- if include "ragflow.needsGeneratedServiceConf" . }}
+        {{- include "ragflow.serviceConfInitContainer" . | nindent 8 }}
+        {{- end }}
+      containers:
+        - name: migration
+          image: {{ include "ragflow.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "ragflow.containerSecurityContext" . | nindent 10 }}
+          args:
+            {{- /* All three services disabled: entrypoint.sh still runs
+                   ensure_db_init(), then exits instead of starting servers. */}}
+            - "--disable-webserver"
+            - "--disable-taskexecutor"
+            - "--disable-datasync"
+            {{- if .Values.migration.initModelProviderTables }}
+            {{- /* Upstream skips these MySQL-only migrations for gaussdb;
+                   mirror that so the job doesn't fail on a non-MySQL backend. */}}
+            {{- if ne .Values.metadataDb.type "gaussdb" }}
+            - "--init-model-provider-tables"
+            {{- end }}
+            {{- end }}
+          {{- include "ragflow.envFrom" . | nindent 10 }}
+          {{- with .Values.migration.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- include "ragflow.volumeMountsBlock" (dict "root" . "extra" list) | nindent 10 }}
+      {{- include "ragflow.volumesBlock" (dict "root" . "extra" list) | nindent 6 }}
+{{- end }}

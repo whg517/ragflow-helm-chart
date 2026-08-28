@@ -1,0 +1,49 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ragflow.fullname" . }}
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ragflow.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    {{- if .Values.networkPolicy.ingressFrom }}
+    - from:
+        {{- toYaml .Values.networkPolicy.ingressFrom | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 9380
+    {{- else }}
+    - ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 9380
+    {{- end }}
+  egress:
+    {{- /* DNS is always required. */}}
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- if .Values.networkPolicy.allowAllEgress }}
+    {{- /* RAGFlow calls external LLM and embedding APIs; restricting egress
+           usually breaks it. Narrow this only if you run models in-cluster. */}}
+    - {}
+    {{- else }}
+    {{- with .Values.networkPolicy.egressTo }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- end }}
+{{- end }}

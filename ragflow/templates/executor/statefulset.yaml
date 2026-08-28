@@ -1,0 +1,101 @@
+{{- if .Values.executor.enabled }}
+{{- $component := "executor" }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ragflow.componentName" (dict "root" . "component" $component) }}
+  labels:
+    {{- include "ragflow.componentLabels" (dict "root" . "component" $component) | nindent 4 }}
+spec:
+  {{- /* StatefulSet, not Deployment: task_executor derives its Redis consumer
+         name from the hostname (entrypoint.sh --host-id defaults to `hostname`).
+         Stable ordinals keep the consumer group from accumulating dead
+         consumers on every restart or scale-down. */}}
+  serviceName: {{ include "ragflow.componentName" (dict "root" . "component" $component) }}-headless
+  podManagementPolicy: Parallel
+  {{- if not .Values.executor.autoscaling.enabled }}
+  replicas: {{ .Values.executor.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "ragflow.componentSelectorLabels" (dict "root" . "component" $component) | nindent 6 }}
+  {{- with .Values.executor.updateStrategy }}
+  updateStrategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "ragflow.componentLabels" (dict "root" . "component" $component) | nindent 8 }}
+      annotations:
+        {{- include "ragflow.configChecksums" . | nindent 8 }}
+        {{- with .Values.executor.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "ragflow.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- include "ragflow.imagePullSecrets" . | nindent 6 }}
+      {{- include "ragflow.podSecurityContext" . | nindent 6 }}
+      {{- /* Parsing jobs can run for minutes; let in-flight work drain. */}}
+      terminationGracePeriodSeconds: {{ .Values.executor.terminationGracePeriodSeconds }}
+      {{- with .Values.executor.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.executor.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.executor.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.executor.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- /* Fails fast with a message that names the missing key, instead of
+               letting it surface as a late crash. */}}
+        {{- include "ragflow.preflightInitContainer" . | nindent 8 }}
+        {{- if include "ragflow.needsGeneratedServiceConf" . }}
+        {{- include "ragflow.serviceConfInitContainer" . | nindent 8 }}
+        {{- end }}
+      containers:
+        - name: ragflow-executor
+          image: {{ include "ragflow.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "ragflow.containerSecurityContext" . | nindent 10 }}
+          args:
+            - "--disable-webserver"
+            - "--disable-datasync"
+            - "--workers={{ .Values.executor.workers }}"
+            {{- /* Explicit host-id from the pod name keeps consumer identity
+                   stable and readable in Redis XINFO output. */}}
+            - "--host-id=$(POD_NAME)"
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          {{- include "ragflow.envFrom" . | nindent 10 }}
+          {{- if .Values.executor.startupProbe.enabled }}
+          startupProbe:
+            {{- omit .Values.executor.startupProbe "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          {{- if .Values.executor.livenessProbe.enabled }}
+          livenessProbe:
+            {{- omit .Values.executor.livenessProbe "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          {{- if .Values.executor.readinessProbe.enabled }}
+          readinessProbe:
+            {{- omit .Values.executor.readinessProbe "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          {{- with .Values.executor.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- include "ragflow.volumeMountsBlock" (dict "root" . "extra" .Values.executor.extraVolumeMounts) | nindent 10 }}
+      {{- include "ragflow.volumesBlock" (dict "root" . "extra" .Values.executor.extraVolumes) | nindent 6 }}
+{{- end }}

@@ -1,0 +1,17 @@
+# Smallest config that renders: chart-managed secret, everything external.
+secretData:
+  MYSQL_PASSWORD: "12345678"
+  REDIS_PASSWORD: "test-redis-pass"
+  MINIO_PASSWORD: "test-minio-pass"
+
+metadataDb:
+  host: mysql.example.svc
+redis:
+  host: redis.example.svc
+storage:
+  minio:
+    host: minio.example.svc
+docEngine:
+  type: infinity
+  infinity:
+    host: infinity.example.svc

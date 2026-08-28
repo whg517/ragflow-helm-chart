@@ -1,0 +1,74 @@
+{{- if .Values.datasync.enabled }}
+{{- $component := "datasync" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ragflow.componentName" (dict "root" . "component" $component) }}
+  labels:
+    {{- include "ragflow.componentLabels" (dict "root" . "component" $component) | nindent 4 }}
+spec:
+  {{- /* SINGLETON — do not parameterise.
+         rag/svr/sync_data_source.py acquires no distributed lock (unlike
+         task_executor.py, which uses RedisDistributedLock). A second replica
+         would sync every data source twice. Recreate rather than RollingUpdate
+         so an upgrade never briefly overlaps two pods. */}}
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "ragflow.componentSelectorLabels" (dict "root" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ragflow.componentLabels" (dict "root" . "component" $component) | nindent 8 }}
+      annotations:
+        {{- include "ragflow.configChecksums" . | nindent 8 }}
+        {{- with .Values.datasync.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "ragflow.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- include "ragflow.imagePullSecrets" . | nindent 6 }}
+      {{- include "ragflow.podSecurityContext" . | nindent 6 }}
+      terminationGracePeriodSeconds: {{ .Values.datasync.terminationGracePeriodSeconds }}
+      {{- with .Values.datasync.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.datasync.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.datasync.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- /* Fails fast with a message that names the missing key, instead of
+               letting it surface as a late crash. */}}
+        {{- include "ragflow.preflightInitContainer" . | nindent 8 }}
+        {{- if include "ragflow.needsGeneratedServiceConf" . }}
+        {{- include "ragflow.serviceConfInitContainer" . | nindent 8 }}
+        {{- end }}
+      containers:
+        - name: ragflow-datasync
+          image: {{ include "ragflow.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "ragflow.containerSecurityContext" . | nindent 10 }}
+          args:
+            - "--disable-webserver"
+            - "--disable-taskexecutor"
+          {{- include "ragflow.envFrom" . | nindent 10 }}
+          {{- if .Values.datasync.livenessProbe.enabled }}
+          livenessProbe:
+            {{- omit .Values.datasync.livenessProbe "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          {{- with .Values.datasync.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- include "ragflow.volumeMountsBlock" (dict "root" . "extra" .Values.datasync.extraVolumeMounts) | nindent 10 }}
+      {{- include "ragflow.volumesBlock" (dict "root" . "extra" .Values.datasync.extraVolumes) | nindent 6 }}
+{{- end }}

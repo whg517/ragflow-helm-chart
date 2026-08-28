@@ -1,0 +1,60 @@
+# Exercises the non-default branches: elasticsearch engine, postgres metadata,
+# HPA on both workloads, NetworkPolicy, ServiceMonitor, service_conf override.
+existingSecret: ragflow-credentials
+
+metadataDb:
+  type: postgres
+  host: postgres.data.svc
+  port: 5432
+  user: ragflow
+  database: rag_flow
+
+redis:
+  host: redis.data.svc
+  username: default
+
+storage:
+  type: minio
+  minio:
+    host: s3.data.svc
+    port: 443
+    secure: true
+    bucket: ragflow-prod
+
+docEngine:
+  type: elasticsearch
+  elasticsearch:
+    host: es.data.svc
+    port: 9200
+    user: elastic
+
+# No serviceConf block needed: the chart generates the postgres section of
+# local.service_conf.yaml from metadataDb.* automatically.
+
+api:
+  adminServer:
+    enabled: true
+  autoscaling:
+    enabled: true
+
+executor:
+  autoscaling:
+    enabled: true
+  workers: 4
+
+networkPolicy:
+  enabled: true
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+
+serviceMonitor:
+  enabled: true
+
+ingress:
+  enabled: true
+  tls:
+    - secretName: ragflow-tls
+      hosts:
+        - ragflow.example.com

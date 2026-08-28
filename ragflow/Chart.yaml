@@ -1,0 +1,17 @@
+apiVersion: v2
+name: ragflow
+description: Production-grade Helm chart for RAGFlow with split api/executor/datasync workloads
+type: application
+version: 1.0.0
+appVersion: "v0.27.0"
+home: https://ragflow.io
+sources:
+  - https://github.com/infiniflow/ragflow
+keywords:
+  - rag
+  - llm
+  - knowledge-base
+maintainers:
+  - name: platform-team
+annotations:
+  artifacthub.io/license: Apache-2.0

@@ -1,0 +1,66 @@
+{{- include "ragflow.validateDbType" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ragflow.fullname" . }}-config
+  labels:
+    {{- include "ragflow.labels" . | nindent 4 }}
+  annotations:
+    {{- /* Created during the hook phase so the pre-install migration Job can
+           reference them; the Job is weight -5, these are -10 so they land
+           first. `before-hook-creation` (not `hook-succeeded`) means they
+           PERSIST for the long-running workloads. */}}
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  {{- /* --- metadata database --- */}}
+  DB_TYPE: {{ .Values.metadataDb.type | quote }}
+  {{- if eq .Values.metadataDb.type "gaussdb" }}
+  {{- /* GaussDB is configured purely through GAUSSDB_METADATA_* env vars.
+         Source: common/settings.py load_database_config(). */}}
+  GAUSSDB_METADATA_HOST: {{ required "metadataDb.host is required" .Values.metadataDb.host | quote }}
+  GAUSSDB_METADATA_PORT: {{ include "ragflow.metadataDbPort" . | quote }}
+  GAUSSDB_METADATA_USER: {{ .Values.metadataDb.user | quote }}
+  GAUSSDB_METADATA_DBNAME: {{ .Values.metadataDb.database | quote }}
+  GAUSSDB_METADATA_SCHEMA: {{ .Values.metadataDb.gaussdb.schema | quote }}
+  GAUSSDB_METADATA_MAX_CONNECTIONS: {{ .Values.metadataDb.gaussdb.maxConnections | quote }}
+  GAUSSDB_METADATA_STALE_TIMEOUT: {{ .Values.metadataDb.gaussdb.staleTimeout | quote }}
+  {{- else }}
+  {{- /* mysql / postgres / oceanbase all resolve through service_conf.yaml,
+         whose template interpolates these MYSQL_* vars. */}}
+  MYSQL_HOST: {{ required "metadataDb.host is required" .Values.metadataDb.host | quote }}
+  MYSQL_PORT: {{ include "ragflow.metadataDbPort" . | quote }}
+  MYSQL_USER: {{ .Values.metadataDb.user | quote }}
+  MYSQL_DBNAME: {{ .Values.metadataDb.database | quote }}
+  {{- end }}
+
+  {{- /* --- redis --- */}}
+  REDIS_HOST: {{ required "redis.host is required" .Values.redis.host | quote }}
+  REDIS_PORT: {{ .Values.redis.port | quote }}
+  {{- with .Values.redis.username }}
+  REDIS_USERNAME: {{ . | quote }}
+  {{- end }}
+
+  {{- /* --- object storage --- */}}
+  {{- if eq .Values.storage.type "minio" }}
+  MINIO_HOST: {{ required "storage.minio.host is required" .Values.storage.minio.host | quote }}
+  MINIO_PORT: {{ .Values.storage.minio.port | quote }}
+  MINIO_USER: {{ .Values.storage.minio.user | quote }}
+  MINIO_ROOT_USER: {{ .Values.storage.minio.user | quote }}
+  MINIO_SECURE: {{ .Values.storage.minio.secure | quote }}
+  {{- with .Values.storage.minio.bucket }}
+  MINIO_BUCKET: {{ . | quote }}
+  {{- end }}
+  {{- end }}
+
+  {{- /* --- doc engine --- */}}
+  {{- include "ragflow.docEngineEnv" . | nindent 2 }}
+
+  {{- /* --- misc app env --- */}}
+  {{- range $k, $v := .Values.env }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+  {{- range $k, $v := .Values.extraEnv }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}

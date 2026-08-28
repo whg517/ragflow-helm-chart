@@ -1,0 +1,66 @@
+# Executor autoscaling driven by Redis queue depth via KEDA.
+#
+# CPU utilisation is a poor proxy for parsing backlog: an executor waiting on a
+# slow embedding API is idle-but-busy, and CPU-based HPA will scale IN exactly
+# when the queue is deepest.
+#
+# Requires KEDA installed in the cluster.
+#
+# Queue names come from common/settings.py get_svr_queue_name():
+#   f"{SVR_QUEUE_NAME}.{priority}.common"  with SVR_QUEUE_NAME = "te"
+# get_svr_queue_names() returns priorities [1, 0], so executors consume BOTH
+# "te.1.common" (high) and "te.0.common" (normal). Scale on both — a backlog
+# on the high-priority stream alone should still add capacity.
+#
+# NOTE: RAGFlow uses Redis STREAMS (xadd/xreadgroup/xack in
+# rag/utils/redis_conn.py), not lists, so the correct KEDA scaler is
+# `redis-streams`, not `redis`.
+
+executor:
+  # Let KEDA own the replica count.
+  autoscaling:
+    enabled: false
+  replicaCount: 2
+
+# Applied separately, not part of this chart:
+#
+# apiVersion: keda.sh/v1alpha1
+# kind: ScaledObject
+# metadata:
+#   name: ragflow-executor
+# spec:
+#   scaleTargetRef:
+#     apiVersion: apps/v1
+#     kind: StatefulSet
+#     name: ragflow-executor
+#   minReplicaCount: 2
+#   maxReplicaCount: 20
+#   pollingInterval: 30
+#   cooldownPeriod: 300
+#   advanced:
+#     horizontalPodAutoscalerConfig:
+#       behavior:
+#         scaleDown:
+#           # Parsing jobs are long; scale in slowly to avoid churn.
+#           stabilizationWindowSeconds: 600
+#           policies:
+#             - type: Pods
+#               value: 1
+#               periodSeconds: 300
+#   triggers:
+#     - type: redis-streams
+#       metadata:
+#         address: redis-master.data.svc.cluster.local:6379
+#         stream: "te.1.common"
+#         consumerGroup: "rag_flow_svr_task_broker"
+#         pendingEntriesCount: "10"
+#       authenticationRef:
+#         name: ragflow-redis-auth
+#     - type: redis-streams
+#       metadata:
+#         address: redis-master.data.svc.cluster.local:6379
+#         stream: "te.0.common"
+#         consumerGroup: "rag_flow_svr_task_broker"
+#         pendingEntriesCount: "10"
+#       authenticationRef:
+#         name: ragflow-redis-auth

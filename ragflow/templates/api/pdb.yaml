@@ -1,0 +1,19 @@
+{{- if and .Values.api.enabled .Values.api.podDisruptionBudget.enabled }}
+{{- $component := "api" }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "ragflow.componentName" (dict "root" . "component" $component) }}
+  labels:
+    {{- include "ragflow.componentLabels" (dict "root" . "component" $component) | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "ragflow.componentSelectorLabels" (dict "root" . "component" $component) | nindent 6 }}
+  {{- with .Values.api.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ . }}
+  {{- end }}
+  {{- with .Values.api.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ . }}
+  {{- end }}
+{{- end }}

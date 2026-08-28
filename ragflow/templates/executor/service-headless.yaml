@@ -1,0 +1,25 @@
+{{- if .Values.executor.enabled }}
+{{- $component := "executor" }}
+{{- /* Headless service required by the StatefulSet for stable network identity.
+       The executor exposes no ports; this exists purely for pod DNS. */}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ragflow.componentName" (dict "root" . "component" $component) }}-headless
+  labels:
+    {{- include "ragflow.componentLabels" (dict "root" . "component" $component) | nindent 4 }}
+  {{- with .Values.executor.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "ragflow.componentSelectorLabels" (dict "root" . "component" $component) | nindent 4 }}
+  ports:
+    - name: placeholder
+      port: 9380
+      targetPort: 9380
+      protocol: TCP
+{{- end }}

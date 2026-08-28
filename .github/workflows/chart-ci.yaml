@@ -1,0 +1,52 @@
+name: chart-ci
+
+on:
+  pull_request:
+    paths:
+      - 'ragflow/**'
+  push:
+    branches: [main]
+    paths:
+      - 'ragflow/**'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.0
+
+      - name: Install kubeconform
+        run: |
+          curl -sSLo kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar xf kubeconform.tar.gz
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Lint
+        run: |
+          for f in minimal full production; do
+            helm lint ./ragflow -f ./ragflow/ci/$f-values.yaml
+          done
+
+      - name: Render and validate against Kubernetes schemas
+        run: |
+          for f in minimal full production; do
+            helm template rf ./ragflow -n ragflow -f ./ragflow/ci/$f-values.yaml > /tmp/$f.yaml
+            kubeconform -strict -summary -ignore-missing-schemas /tmp/$f.yaml
+          done
+
+      - name: Negative tests (guardrails must reject bad input)
+        run: bash ./ragflow/ci/negative-tests.sh ./ragflow
+
+      - name: Verify no plaintext secrets in rendered default output
+        run: |
+          # The default values must not be installable without credentials.
+          if helm template rf ./ragflow >/dev/null 2>&1; then
+            echo "FAIL: chart rendered with no credentials configured"
+            exit 1
+          fi
+          echo "ok: chart refuses to render without credentials"

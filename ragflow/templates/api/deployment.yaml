@@ -1,0 +1,104 @@
+{{- if .Values.api.enabled }}
+{{- $component := "api" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ragflow.componentName" (dict "root" . "component" $component) }}
+  labels:
+    {{- include "ragflow.componentLabels" (dict "root" . "component" $component) | nindent 4 }}
+spec:
+  {{- if not .Values.api.autoscaling.enabled }}
+  replicas: {{ .Values.api.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "ragflow.componentSelectorLabels" (dict "root" . "component" $component) | nindent 6 }}
+  {{- with .Values.api.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "ragflow.componentLabels" (dict "root" . "component" $component) | nindent 8 }}
+      annotations:
+        {{- include "ragflow.configChecksums" . | nindent 8 }}
+        {{- with .Values.api.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "ragflow.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- include "ragflow.imagePullSecrets" . | nindent 6 }}
+      {{- include "ragflow.podSecurityContext" . | nindent 6 }}
+      {{- with .Values.api.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- /* Fails fast with a message that names the missing key, instead of
+               letting it surface as a late crash. */}}
+        {{- include "ragflow.preflightInitContainer" . | nindent 8 }}
+        {{- if include "ragflow.needsGeneratedServiceConf" . }}
+        {{- include "ragflow.serviceConfInitContainer" . | nindent 8 }}
+        {{- end }}
+      containers:
+        - name: ragflow-api
+          image: {{ include "ragflow.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "ragflow.containerSecurityContext" . | nindent 10 }}
+          args:
+            {{- /* This workload serves HTTP only. Executors and datasync run
+                   as their own workloads so each scales independently. */}}
+            - "--disable-taskexecutor"
+            - "--disable-datasync"
+            {{- if .Values.api.adminServer.enabled }}
+            - "--enable-adminserver"
+            {{- end }}
+            {{- if .Values.api.initSuperuser }}
+            - "--init-superuser"
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+            - name: http-api
+              containerPort: 9380
+              protocol: TCP
+            {{- if .Values.api.adminServer.enabled }}
+            - name: admin
+              containerPort: {{ .Values.api.adminServer.port }}
+              protocol: TCP
+            {{- end }}
+          {{- include "ragflow.envFrom" . | nindent 10 }}
+          {{- if .Values.api.startupProbe.enabled }}
+          startupProbe:
+            {{- omit .Values.api.startupProbe "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          {{- if .Values.api.livenessProbe.enabled }}
+          livenessProbe:
+            {{- omit .Values.api.livenessProbe "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          {{- if .Values.api.readinessProbe.enabled }}
+          readinessProbe:
+            {{- omit .Values.api.readinessProbe "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          {{- with .Values.api.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- include "ragflow.volumeMountsBlock" (dict "root" . "extra" .Values.api.extraVolumeMounts) | nindent 10 }}
+      {{- include "ragflow.volumesBlock" (dict "root" . "extra" .Values.api.extraVolumes) | nindent 6 }}
+{{- end }}
