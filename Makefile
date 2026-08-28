@@ -6,7 +6,7 @@ CHART ?= ./ragflow
 NS    ?= ragflow
 IMAGE ?= infiniflow/ragflow:v0.27.0
 
-.PHONY: lint template validate negative verify verify-image clean
+.PHONY: lint template validate negative verify verify-image e2e clean
 
 lint:
 	helm lint $(CHART) -f $(CHART)/ci/minimal-values.yaml
@@ -33,6 +33,12 @@ negative:
 # default `verify` target. Run it when bumping appVersion.
 verify-image:
 	bash $(CHART)/ci/verify-image-assumptions.sh $(IMAGE)
+
+# Full lifecycle test on a live kind cluster (stub image, ~2 min): install,
+# readiness, migration hook, preflight, rendered config, HTTP probes, rolling
+# upgrade, datasync singleton invariant, uninstall leftovers.
+e2e:
+	bash $(CHART)/ci/e2e-deploy.sh
 
 verify: lint validate negative
 	@echo "all checks passed"

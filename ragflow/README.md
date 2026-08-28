@@ -205,6 +205,14 @@ StatefulSet ordinals, `host-id` = pod name, worker count, datasync singleton
 under `Recreate`, role isolation — and, via a negative control, that the exec
 probe can actually report unhealthy.
 
+`ci/e2e-deploy.sh` is the full lifecycle: it creates its own kind cluster,
+installs the chart, and asserts install → readiness → migration hook →
+preflight → rendered config → HTTP serving → upgrade → datasync-singleton
+invariant → uninstall (only the documented hook resources remain — Helm does
+not track hook resources in the release manifest, per
+[helm/helm#9206](https://github.com/helm/helm/issues/9206)). Stub image by
+default for speed; `REAL_IMAGE=1` runs it against the real RAGFlow image.
+
 ## Known gaps
 
 - **No metrics endpoint.** RAGFlow ships no `/metrics` route and no Prometheus

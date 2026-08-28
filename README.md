@@ -110,9 +110,11 @@ make verify-image  # 17 design-assumption checks against the real image
 
 Two further scripts run against live systems and are documented in
 [`ragflow/README.md#validation`](ragflow/README.md#validation):
-`ci/e2e-initcontainer.sh` (in-cluster password round-trip through RAGFlow's
-own config loader) and `ci/verify-orchestration.sh` (live-cluster behaviour,
-with negative controls).
+`ci/e2e-deploy.sh` (full lifecycle on a live kind cluster — install,
+readiness, hooks, upgrade, uninstall invariants), `ci/e2e-initcontainer.sh`
+(in-cluster password round-trip through RAGFlow's own config loader) and
+`ci/verify-orchestration.sh` (live-cluster behaviour, with negative
+controls).
 
 CI runs the first layer on every push to `ragflow/**` or the workflow itself.
 
