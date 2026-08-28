@@ -64,15 +64,32 @@ jobs:
           fi
           echo "ok: chart refuses to render without credentials"
 
-      - name: Verify no fixture passwords in rendered manifests
+      - name: Verify fixture passwords only ever land in Secrets
         run: |
-          # Fixture passwords (0012345 etc.) must exist only in the values
-          # files, never in rendered Secrets/ConfigMaps that a user might
-          # treat as a template.
+          # With chart-managed secretData, the credentials MUST appear in the
+          # env Secret (that is the design). What must never happen is a
+          # password landing in any other resource kind - ConfigMap, pod env,
+          # args, annotations.
+          leaked=0
           for f in minimal full production; do
-            if grep -rE "(0012345|12345678|p@ss:word\*1|test-redis-pass|test-minio-pass)" /tmp/$f.yaml; then
-              echo "FAIL: fixture password leaked into rendered $f.yaml"
-              exit 1
-            fi
+            python3 - "$f" <<'PY'
+          import sys, yaml
+          f = sys.argv[1]
+          needles = ("0012345", "12345678", "p@ss:word*1",
+                     "test-redis-pass", "test-minio-pass")
+          bad = False
+          for doc in yaml.safe_load_all(open(f"/tmp/{f}.yaml")):
+              if not doc:
+                  continue
+              if doc.get("kind") == "Secret":
+                  continue  # the one legitimate place
+              text = yaml.safe_dump(doc)
+              if any(n in text for n in needles):
+                  print(f"FAIL: fixture password found in "
+                        f"{doc['kind']}/{doc['metadata']['name']} ({f}.yaml)")
+                  bad = True
+          sys.exit(1 if bad else 0)
+          PY
+            [ $? -eq 0 ] || leaked=1
           done
-          echo "ok: rendered manifests contain no fixture passwords"
+          [ "$leaked" -eq 0 ] && echo "ok: fixture passwords only in Secret resources"
