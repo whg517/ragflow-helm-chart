@@ -57,6 +57,11 @@ spec:
             - "--disable-webserver"
             - "--disable-taskexecutor"
             - "--disable-datasync"
+            {{- if .Values.api.initSuperuser }}
+            {{- /* Idempotent upstream: init_superuser() returns early if the
+                   email already exists, so this is safe on every upgrade. */}}
+            - "--init-superuser"
+            {{- end }}
             {{- if .Values.migration.initModelProviderTables }}
             {{- /* Upstream skips these MySQL-only migrations for gaussdb;
                    mirror that so the job doesn't fail on a non-MySQL backend. */}}
@@ -65,6 +70,22 @@ spec:
             {{- end }}
             {{- end }}
           {{- include "ragflow.envFrom" . | nindent 10 }}
+          {{- if .Values.api.initSuperuser }}
+          env:
+            {{- /* Credentials stay in the Secret; only the knob lives in values. */}}
+            - name: DEFAULT_SUPERUSER_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ragflow.secretName" . }}
+                  key: DEFAULT_SUPERUSER_EMAIL
+                  optional: false
+            - name: DEFAULT_SUPERUSER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ragflow.secretName" . }}
+                  key: DEFAULT_SUPERUSER_PASSWORD
+                  optional: false
+          {{- end }}
           {{- with .Values.migration.resources }}
           resources:
             {{- toYaml . | nindent 12 }}

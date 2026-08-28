@@ -49,8 +49,7 @@ networkPolicy:
         matchLabels:
           kubernetes.io/metadata.name: ingress-nginx
 
-serviceMonitor:
-  enabled: true
+# serviceMonitor removed: RAGFlow ships no /metrics endpoint (verified).
 
 ingress:
   enabled: true

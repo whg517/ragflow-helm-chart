@@ -58,6 +58,11 @@ data:
   {{- include "ragflow.docEngineEnv" . | nindent 2 }}
 
   {{- /* --- misc app env --- */}}
+  {{- /* Pin the server mode. entrypoint.sh's silent default is also python,
+         but making it explicit guarantees the nginx vhost, the process layout
+         and the chart's python-path probes stay mutually consistent. */}}
+  API_PROXY_SCHEME: python
+  REGISTER_ENABLED: {{ .Values.api.registerEnabled | ternary "1" "0" | quote }}
   {{- range $k, $v := .Values.env }}
   {{ $k }}: {{ $v | quote }}
   {{- end }}

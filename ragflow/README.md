@@ -15,7 +15,7 @@ Findings from reading the upstream templates and application source at
 | 2 | **No probes at all** on the ragflow container | Traffic routes to pods that aren't ready; hung processes are never restarted | Startup/liveness/readiness on real endpoints |
 | 3 | **Passwords rendered unquoted** into the Secret | `MYSQL_PASSWORD=12345678` renders as an int; the API server **rejects the Secret**. `0012345` silently becomes `5349` (octal). A password with `:` or `*` fails to parse | Every value `quote`d |
 | 4 | ConfigMaps named `nginx-config`, `mysql-init-script`, `ragflow-service-config` with **no release prefix** | Two releases in one namespace silently overwrite each other | All names release-scoped |
-| 5 | Elasticsearch initContainer is **`privileged: true`, `runAsUser: 0`** | Rejected under PSA `baseline`/`restricted` | Doc engine is external; pods satisfy `restricted` |
+| 5 | Elasticsearch initContainer is **`privileged: true`, `runAsUser: 0`** | Rejected under PSA `baseline`/`restricted` | Doc engine is external. Note: the RAGFlow containers themselves still run as root (see security section) |
 | 6 | No PDB, HPA, NetworkPolicy, ServiceMonitor, ServiceAccount | No availability guarantees or policy surface | All included |
 | 7 | Schema init runs in **every** pod | Concurrent DDL across replicas | Serialized `pre-install`/`pre-upgrade` Job |
 | 8 | MySQL is the **only** metadata backend | Can't use PostgreSQL/GaussDB/OceanBase, which the app supports | All four selectable |
@@ -208,8 +208,12 @@ triggers:
       listLength: "5"
 ```
 
-Set `executor.terminationGracePeriodSeconds` above your longest expected
-document parse (default 300) so in-flight work drains on scale-in.
+`executor.terminationGracePeriodSeconds` defaults to 4980s because a single
+parse task has a hard 80-minute timeout (`@timeout(60 * 80, 1)` on
+`build_chunks` in `rag/svr/task_executor.py`). Scaling in before a task finishes
+aborts it; Redis Streams redeliver the unacked message, so nothing is lost, but
+you pay for duplicate parsing. Lower the grace period only if your documents
+finish well inside it.
 
 ## Validation
 
@@ -256,11 +260,35 @@ each executor's Redis `host-id` equals its pod name, worker count is
 runs only its own processes, and — with a **negative control** — that the exec
 liveness probe can actually report unhealthy rather than always passing.
 
+## Security posture (read before deploying)
+
+The stock image runs its entrypoint as **root**, and the chart's defaults
+reflect that instead of pretending otherwise. Verified against v0.27.0:
+`entrypoint.sh` writes `/ragflow/conf/service_conf.yaml`, copies the nginx
+vhost into `/etc/nginx/conf.d/`, and nginx binds `:80` and writes
+`/var/log/nginx` - all root-owned `0755` paths; the image ships no non-root
+user. Forcing `runAsUser: 1000` makes every api pod CrashLoop within seconds.
+
+Consequences:
+
+- Pods will be **rejected** by a namespace enforcing PSA `restricted` (and by
+  any policy forcing `runAsNonRoot`). Deploy into an unlabeled or `baseline`
+  namespace, or rebuild the image first.
+- The **recommended hardening path** is an image rebuild: create a dedicated
+  user, `chown /ragflow` to it, switch nginx to a port >= 1024, then set
+  `podSecurityContext`/`containerSecurityContext` in values. The chart's
+  security fields are plain passthroughs, so no chart change is needed.
+
+A `readOnlyRootFilesystem` hard line is likewise impossible with the stock
+image (runtime writes to `/ragflow/conf`, `/ragflow/logs`, `/var/log/nginx`,
+`/var/run`).
+
 ## Known gaps
 
-- **No metrics endpoint verified.** `serviceMonitor.enabled` assumes `/metrics`
-  on port 9380; this was not confirmed against a running instance. Leave it off
-  until verified.
+- **No metrics endpoint.** RAGFlow ships no `/metrics` route and no Prometheus
+  instrumentation (verified in the v0.27.0 source), so the chart intentionally
+  has no ServiceMonitor. Scrape the Kubernetes API for pod-level signals, or
+  add instrumentation to the image yourself.
 - **Logs are ephemeral**, written to `/ragflow/logs` inside the container. Use a
   node-level log collector.
 - **No backup tooling.** External dependencies own their own backups.

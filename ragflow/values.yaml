@@ -136,21 +136,32 @@ serviceConf: {}
 llmFactories: {}
 
 # -----------------------------------------------------------------------------
-# Pod-level security. Defaults satisfy the PSA "restricted" profile.
+# Pod-level security.
+#
+# IMPORTANT: the stock infiniflow/ragflow image REQUIRES root (verified against
+# v0.27.0): entrypoint.sh writes /ragflow/conf/service_conf.yaml, copies the
+# nginx vhost into /etc/nginx/conf.d, and nginx binds :80 and writes
+# /var/log/nginx. Those paths are root-owned 0755 and the image ships no
+# non-root user. The defaults below therefore run as root and do NOT satisfy
+# the PSA "restricted" profile - only "privileged"/unlabeled namespaces, or
+# "baseline" if your policy does not force runAsNonRoot.
+#
+# If you rebuild the image with a non-root user (recommended hardening; needs a
+# chown of /ragflow and a nginx config listening on >=1024), set:
+#   podSecurityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000,
+#                        fsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
+#   containerSecurityContext:
+#     allowPrivilegeEscalation: false
+#     capabilities: {drop: ["ALL"]}
 # -----------------------------------------------------------------------------
-podSecurityContext:
-  runAsNonRoot: true
-  runAsUser: 1000
-  runAsGroup: 1000
-  fsGroup: 1000
-  seccompProfile:
-    type: RuntimeDefault
+podSecurityContext: {}
+  # runAsNonRoot: true
+  # runAsUser: 1000
 
 containerSecurityContext:
-  allowPrivilegeEscalation: false
+  allowPrivilegeEscalation: true
   readOnlyRootFilesystem: false
-  capabilities:
-    drop: ["ALL"]
+  # privileged: false
 
 # =============================================================================
 # Workload: api  (nginx + ragflow_server)
@@ -167,9 +178,16 @@ api:
     enabled: false
     port: 9381
 
-  # Runs the DB schema migration on startup. Exactly ONE workload should do
-  # this; the pre-install/pre-upgrade Job handles it instead by default.
+  # Creates the first admin account (idempotent: skipped if the email already
+  # exists). Email/password come from DEFAULT_SUPERUSER_EMAIL /
+  # DEFAULT_SUPERUSER_PASSWORD in existingSecret - NOT from values. The app's
+  # built-in defaults are admin@ragflow.io / "admin"; always override them via
+  # the Secret in anything reachable by users.
   initSuperuser: false
+
+  # Requires registration for the first login when initSuperuser is off. The
+  # app default is open registration (REGISTER_ENABLED=1).
+  registerEnabled: true
 
   service:
     type: ClusterIP
@@ -210,7 +228,7 @@ api:
     httpGet:
       path: /api/v1/system/ping
       port: http
-    initialDelaySeconds: 60
+    # Runs only after the startupProbe gate passes.
     periodSeconds: 20
     timeoutSeconds: 5
     failureThreshold: 6
@@ -285,8 +303,12 @@ executor:
   updateStrategy:
     type: RollingUpdate
 
-  # Document parsing can run long; give in-flight tasks time to finish.
-  terminationGracePeriodSeconds: 300
+  # A single parse task has a hard timeout of 80 minutes
+  # (task_executor.py: @timeout(60 * 80, 1) on build_chunks). Kill earlier than
+  # that and scale-in/node-drain aborts in-flight work: Redis Streams will
+  # redeliver the unacked message, but you pay for duplicate parsing and
+  # progress flapping. Keep this >= the task timeout.
+  terminationGracePeriodSeconds: 4980
 
   livenessProbe:
     enabled: true
@@ -298,7 +320,7 @@ executor:
         # The [r] character class stops pgrep matching this probe's own
         # command line, which would make the probe always succeed.
         - pgrep -f "[r]ag/svr/task_executor.py" > /dev/null
-    initialDelaySeconds: 90
+    # Runs only after the startupProbe gate passes, so no initialDelay needed.
     periodSeconds: 30
     timeoutSeconds: 10
     failureThreshold: 4
@@ -308,6 +330,9 @@ executor:
 
   startupProbe:
     enabled: true
+    # ensure_db_init() runs BEFORE any worker spawns and can take minutes on a
+    # cold cluster. Kubernetes does not run liveness while a startupProbe is
+    # pending, so this gate - not the liveness delay - owns the boot window.
     exec:
       command:
         - /bin/sh
@@ -315,7 +340,6 @@ executor:
         # The [r] character class stops pgrep matching this probe's own
         # command line, which would make the probe always succeed.
         - pgrep -f "[r]ag/svr/task_executor.py" > /dev/null
-    initialDelaySeconds: 30
     periodSeconds: 10
     failureThreshold: 60
 
@@ -354,10 +378,21 @@ datasync:
         - -c
         # See the executor probe: [r] prevents self-matching.
         - pgrep -f "[r]ag/svr/sync_data_source.py" > /dev/null
-    initialDelaySeconds: 90
+    # Runs only after the startupProbe gate passes.
     periodSeconds: 30
     timeoutSeconds: 10
     failureThreshold: 4
+
+  startupProbe:
+    enabled: true
+    # datasync also runs ensure_db_init() before its sync loop starts.
+    exec:
+      command:
+        - /bin/sh
+        - -c
+        - pgrep -f "[r]ag/svr/sync_data_source.py" > /dev/null
+    periodSeconds: 10
+    failureThreshold: 60
 
   nodeSelector: {}
   tolerations: []
@@ -421,13 +456,3 @@ networkPolicy:
   # Egress destinations. Leave empty to allow all egress (LLM APIs often need it).
   egressTo: []
   allowAllEgress: true
-
-# =============================================================================
-# Prometheus Operator integration
-# =============================================================================
-serviceMonitor:
-  enabled: false
-  interval: 30s
-  scrapeTimeout: 10s
-  labels: {}
-  path: /metrics
