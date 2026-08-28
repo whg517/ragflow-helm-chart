@@ -9,20 +9,30 @@ on:
     paths:
       - 'ragflow/**'
 
+# Cancel superseded runs on the same ref to save minutes.
+concurrency:
+  group: chart-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # v7: node24 runtime; requires GitHub runner >= 2.327.1 (ubuntu-latest is
+      # far ahead of that). No input changes for our usage.
+      - uses: actions/checkout@v7
 
-      - uses: azure/setup-helm@v4
+      # v5: node24 runtime; supports Helm 3.x and 4.x version inputs.
+      - uses: azure/setup-helm@v5
         with:
-          version: v3.16.0
+          # Pin to the version the chart is developed and verified against
+          # locally, so CI results predictably match local `make verify`.
+          version: v4.2.4
 
       - name: Install kubeconform
         run: |
           curl -sSLo kubeconform.tar.gz \
-            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+            https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz
           tar xf kubeconform.tar.gz
           sudo mv kubeconform /usr/local/bin/
 
@@ -50,3 +60,16 @@ jobs:
             exit 1
           fi
           echo "ok: chart refuses to render without credentials"
+
+      - name: Verify no plaintext secrets in CI fixture manifests
+        run: |
+          # Fixture passwords (0012345 etc.) must exist only in the values
+          # files, never in rendered Secrets/ConfigMaps that a user might
+          # treat as a template.
+          for f in minimal full production; do
+            if grep -rE "(0012345|12345678|p@ss:word\*1|test-redis-pass|test-minio-pass)" /tmp/$f.yaml; then
+              echo "FAIL: fixture password leaked into rendered $f.yaml"
+              exit 1
+            fi
+          done
+          echo "ok: rendered manifests contain no fixture passwords"
