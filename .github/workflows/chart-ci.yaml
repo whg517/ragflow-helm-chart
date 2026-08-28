@@ -4,10 +4,13 @@ on:
   pull_request:
     paths:
       - 'ragflow/**'
+      - '.github/workflows/**'
   push:
     branches: [main]
     paths:
       - 'ragflow/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
 
 # Cancel superseded runs on the same ref to save minutes.
 concurrency:
@@ -61,7 +64,7 @@ jobs:
           fi
           echo "ok: chart refuses to render without credentials"
 
-      - name: Verify no plaintext secrets in CI fixture manifests
+      - name: Verify no fixture passwords in rendered manifests
         run: |
           # Fixture passwords (0012345 etc.) must exist only in the values
           # files, never in rendered Secrets/ConfigMaps that a user might
