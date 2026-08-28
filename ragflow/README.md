@@ -1,118 +1,92 @@
 # RAGFlow Production Helm Chart
 
-A production-oriented Helm chart for [RAGFlow](https://github.com/infiniflow/ragflow),
-built because the chart bundled in the upstream repo (`helm/`, version `0.1.1`,
-`appVersion: dev`) is a starting point rather than a production artifact.
+A production-oriented Helm chart for [RAGFlow](https://github.com/infiniflow/ragflow).
 
-## Why not the upstream chart
+The chart bundled in the upstream repo (`helm/`, version `0.1.1`) is a starting
+point rather than a production artifact. This chart rebuilds it around three
+principles:
 
-Findings from reading the upstream templates and application source at
-`v0.27.0`. Each is reproduced by rendering the upstream chart locally.
-
-| # | Upstream behaviour | Consequence | Here |
-|---|---|---|---|
-| 1 | Everything runs in **one `replicas: 1` Deployment** — API, task executors and datasync in a single container | No independent scaling; parsing load and HTTP serving compete | Three workloads, each scaled separately |
-| 2 | **No probes at all** on the ragflow container | Traffic routes to pods that aren't ready; hung processes are never restarted | Startup/liveness/readiness on real endpoints |
-| 3 | **Passwords rendered unquoted** into the Secret | `MYSQL_PASSWORD=12345678` renders as an int; the API server **rejects the Secret**. `0012345` silently becomes `5349` (octal). A password with `:` or `*` fails to parse | Every value `quote`d |
-| 4 | ConfigMaps named `nginx-config`, `mysql-init-script`, `ragflow-service-config` with **no release prefix** | Two releases in one namespace silently overwrite each other | All names release-scoped |
-| 5 | Elasticsearch initContainer is **`privileged: true`, `runAsUser: 0`** | Rejected under PSA `baseline`/`restricted` | Doc engine is external. Note: the RAGFlow containers themselves still run as root (see security section) |
-| 6 | No PDB, HPA, NetworkPolicy, ServiceMonitor, ServiceAccount | No availability guarantees or policy surface | All included |
-| 7 | Schema init runs in **every** pod | Concurrent DDL across replicas | Serialized `pre-install`/`pre-upgrade` Job |
-| 8 | MySQL is the **only** metadata backend | Can't use PostgreSQL/GaussDB/OceanBase, which the app supports | All four selectable |
-
-Reproduce finding #3:
-
-```bash
-helm template up ./ragflow-0.27.0/helm --set env.MYSQL_PASSWORD=12345678 \
-  --set env.DOC_ENGINE=infinity | kubeconform -strict -
-# Secret ... is invalid: at '/stringData/MYSQL_PASSWORD': got number, want null or string
-```
+1. **Workload split** — the RAGFlow image is role-switchable via
+   `entrypoint.sh` flags, so one image serves as an API Deployment, an executor
+   StatefulSet, and a single-instance datasync Deployment, each scaling on its
+   own terms.
+2. **External dependencies** — metadata DB, Redis, object storage and the doc
+   engine are all external; the chart manages only the application.
+3. **Evidence over convention** — every structural decision below was verified
+   against the v0.27.0 source and, where it matters, against the running image
+   in a real cluster. The "Why" column in the table and every non-obvious
+   template comment cite its source.
 
 ## Architecture
 
-The upstream container image is role-switchable via `entrypoint.sh` flags
-(`--disable-webserver`, `--disable-taskexecutor`, `--disable-datasync`). This
-chart uses one image as three workloads:
-
-| Workload | Kind | Args | Scaling |
+| Workload | Kind | entrypoint flags | Why this shape |
 |---|---|---|---|
-| `api` | Deployment | `--disable-taskexecutor --disable-datasync` | Stateless; HPA-ready |
-| `executor` | StatefulSet | `--disable-webserver --disable-datasync --workers=N` | Scale with parsing backlog |
-| `datasync` | Deployment | `--disable-webserver --disable-taskexecutor` | **Fixed at 1** |
-| `migration` | Job (hook) | all three disabled | Runs once per install/upgrade |
+| `api` | Deployment | `--disable-taskexecutor --disable-datasync` | Stateless HTTP serving; scale with traffic |
+| `executor` | StatefulSet | `--disable-webserver --disable-datasync` | `task_executor.py` derives its Redis consumer-group name from the hostname; stable ordinals keep the group clean. `--host-id` is pinned to the pod name |
+| `datasync` | Deployment, **replicas fixed at 1** | `--disable-webserver --disable-taskexecutor` | `sync_data_source.py` holds no distributed lock (unlike the executor); a second replica would double-sync every data source. `Recreate` strategy so upgrades never overlap |
+| `migration` | pre-install Job | all three disabled | DDL runs once, serialized, outside the request path |
 
-**Why the executor is a StatefulSet.** `task_executor.py` consumes a Redis
-Stream consumer group (`rag_flow_svr_task_broker`) with a consumer name derived
-from the hostname. Stable ordinals mean restarts reuse consumer identities
-instead of accumulating dead ones. The chart passes `--host-id=$(POD_NAME)`
-explicitly so identity is readable in `XINFO CONSUMERS` output.
+## Chart vs upstream
 
-**Why datasync is a singleton.** `rag/svr/sync_data_source.py` acquires no
-distributed lock — unlike `task_executor.py`, which uses `RedisDistributedLock`.
-Two replicas would sync every data source twice. Replica count is deliberately
-not exposed, and the strategy is `Recreate` so upgrades never overlap.
+Findings from reading the upstream templates and application source at
+v0.27.0. Each is reproduced locally before being claimed here.
 
-**Probe endpoints** (verified in `api/apps/restful_apis/system_api.py`, both
-without `@login_required`):
+| # | Upstream behaviour | Consequence | Here |
+|---|---|---|---|
+| 1 | One `replicas: 1` Deployment for everything | Parsing load and HTTP serving compete; nothing scales | Three workloads |
+| 2 | No probes | Traffic to unready pods; hung processes never restart | Startup/liveness/readiness on verified endpoints |
+| 3 | Passwords rendered unquoted into Secrets | `12345678` becomes an int and the API server rejects the Secret; `0012345` silently becomes `5349` (octal) | Every value quoted; round-trip tested against 10 hostile passwords |
+| 4 | ConfigMaps without release prefix | Two releases in one namespace overwrite each other | All names release-scoped |
+| 5 | Elasticsearch initContainer `privileged: true` | Rejected under PSA baseline/restricted | Doc engine is external |
+| 6 | No PDB/HPA/NetworkPolicy/ServiceAccount | No availability or policy surface | Included |
+| 7 | Schema init in every pod | Concurrent DDL across replicas | Serialized hook Job |
+| 8 | MySQL as the only metadata backend | PostgreSQL/GaussDB/OceanBase unsupported (the app supports all four) | All four selectable |
 
-- `/api/v1/system/ping` → `pong`. No dependency checks — used for liveness so a
-  database blip doesn't kill healthy containers.
-- `/api/v1/system/healthz` → checks db, redis, doc_engine, storage; returns 500
-  unless all four pass. Used for readiness.
+## Security posture — read before deploying
 
-**The executor and datasync probes use a `[r]` character class, deliberately.**
-A Kubernetes `exec` probe runs `sh -c "pgrep -f rag/svr/task_executor.py"`, and
-that shell's *own* command line contains the pattern — so `pgrep` matches
-itself and the probe **can never fail**. Verified in the real image:
+The stock image runs its entrypoint as **root**, and the chart defaults reflect
+that instead of pretending otherwise. Verified against v0.27.0:
+`entrypoint.sh` writes `/ragflow/conf/service_conf.yaml`, copies the nginx
+vhost into `/etc/nginx/conf.d/`, and nginx binds `:80` — all root-owned `0755`
+paths, and the image ships no non-root user. Forcing `runAsUser: 1000` makes
+every pod CrashLoop within seconds.
 
-```
-unbracketed, no target: exit=0   <-- self-match bug, always "healthy"
-bracketed,   no target: exit=1   <-- correctly unhealthy
-bracketed,   target up: exit=0   <-- correctly healthy
-```
+Consequences:
 
-Reproduce with `bash ci/verify-probes.sh` inside the image:
-
-```bash
-docker run --rm --entrypoint sh \
-  -v "$PWD/ragflow/ci/verify-probes.sh:/t.sh:ro" \
-  infiniflow/ragflow:v0.27.0 /t.sh
-```
-
-Note the test script must live in a **file**; inlining it via `sh -c` puts the
-pattern into PID 1's command line and every check then self-matches.
+- Pods will be rejected by a namespace enforcing PSA `restricted`. Deploy into
+  an unlabeled or `baseline` namespace.
+- The recommended hardening path is an image rebuild: create a dedicated user,
+  `chown /ragflow`, move nginx to a port ≥ 1024 — then set
+  `podSecurityContext` in values. The chart's security fields are passthroughs;
+  no chart change needed.
 
 ## Prerequisites
 
-Kubernetes >= 1.23, Helm >= 3.8, and these **external** services:
+Kubernetes ≥ 1.23, Helm ≥ 3.8, and these **external** services:
 
 - Metadata DB: MySQL 8.x, PostgreSQL, OceanBase, or GaussDB
 - Redis / Valkey
 - S3-compatible object storage
 - Doc engine: Infinity, Elasticsearch 8.x, or OpenSearch 2.x
 
-The image is **3.19 GB compressed** (41 layers, ~8-10 GB on disk). On a cold
-node the first pull dominates startup, which is why `startupProbe` allows up to
-10 minutes. Pre-pulling onto nodes, or mirroring into a local registry via
-`global.imageRegistry`, is strongly recommended.
+The image is ~3.2 GB compressed. Pre-pull or mirror it; the startupProbe
+allows up to 10 minutes for a cold boot.
 
-## Install
-
-Create the Secret first — the chart never needs plaintext credentials:
+## Quick start
 
 ```bash
+# 1. Credentials — the chart never takes plaintext passwords in values
 kubectl create secret generic ragflow-credentials -n ragflow \
   --from-literal=MYSQL_PASSWORD='...' \
   --from-literal=REDIS_PASSWORD='...' \
   --from-literal=MINIO_PASSWORD='...'
-```
 
-```bash
+# 2. Install
 helm upgrade --install ragflow ./ragflow -n ragflow --create-namespace \
   -f my-values.yaml
 ```
 
-Minimum viable values:
+Minimum values:
 
 ```yaml
 existingSecret: ragflow-credentials
@@ -130,167 +104,119 @@ docEngine:
     host: infinity.data.svc.cluster.local
 ```
 
-## Non-MySQL metadata backends
+## Metadata backends
 
-`metadataDb.type` accepts `mysql`, `postgres`, `oceanbase`, `gaussdb`.
-
-**The password always comes from `existingSecret`. It never goes in values.**
+`metadataDb.type` accepts `mysql`, `postgres`, `oceanbase`, `gaussdb`. In all
+four cases **the password comes from `existingSecret`, never from values**.
 
 ```yaml
 metadataDb:
-  type: postgres
+  type: postgres        # or mysql / oceanbase / gaussdb
   host: postgres.data.svc
-  port: 5432
+  port: 5432            # optional; defaults follow the type
   user: ragflow
-  database: rag_flow
-existingSecret: ragflow-credentials   # supplies MYSQL_PASSWORD
+existingSecret: ragflow-credentials
 ```
 
-### Why postgres/oceanbase need an initContainer
+### Why postgres/oceanbase get an initContainer
 
 These two backends are configured through `local.service_conf.yaml`, not env
-vars — and three facts (all verified against `infiniflow/ragflow:v0.27.0`) make
-that awkward:
+vars, and three facts (verified in v0.27.0) make that awkward:
 
-1. The shipped `service_conf.yaml` has **no `postgres:` section at all** (only
-   `mysql` and `oceanbase`).
-2. `common/settings.py` resolves `DATABASE` at **module import time** via
-   `decrypt_database_config()`, which does an unguarded `database["password"]`
-   lookup. A missing section is therefore a hard crash — every process dies with
-   `KeyError: 'password'` before serving anything, not a runtime connect error.
-3. `entrypoint.sh` expands `${VAR}` **only** inside `service_conf.yaml.template`.
-   `local.service_conf.yaml` is read verbatim by `read_config()`, so a
-   `${MYSQL_PASSWORD}` placeholder in it would never be substituted.
+1. The shipped `service_conf.yaml` has **no `postgres:` section** at all.
+2. `common/settings.py` resolves `DATABASE` at **module import time** via an
+   unguarded `database["password"]` lookup — a missing section crashes every
+   process with `KeyError: 'password'` before it can serve anything.
+3. `entrypoint.sh` expands `${VAR}` **only** inside
+   `service_conf.yaml.template`; `local.service_conf.yaml` is read verbatim.
 
-Naively, (3) forces the password to be a literal in the file, and thus into
-values. Instead the chart adds a `render-service-conf` initContainer that reads
-`MYSQL_PASSWORD` from the Secret **via the environment** and writes the file
-into a shared `emptyDir` at pod startup. The password never appears in
-`values.yaml`, in a ConfigMap, or in `helm template` output.
+So the chart adds a `render-service-conf` initContainer: it reads
+`MYSQL_PASSWORD` from the Secret via the environment, writes a properly quoted
+YAML file into a shared `emptyDir`, and the main container mounts that single
+file by subPath (so the 17 other files in `/ragflow/conf` survive). The
+password never appears in values, ConfigMaps, or rendered manifests.
 
-`read_config()` merges with `global_config.update(local_config)` — a top-level
-key merge — so emitting just the database section leaves everything else intact.
+Quoting is not cosmetic: unquoted, `0012345` parses as int `5349` (octal),
+`yes` as `True`, `&x`/`*x` as YAML anchors.
 
-Two details that are easy to get wrong:
-
-- **Quoting.** The init script emits a double-quoted YAML scalar and escapes
-  `\` and `"`. Unquoted, `0012345` is read back as int **5349** (octal), `yes`
-  as `True`, and `&x` / `*x` are YAML anchors. Round-tripped against 10 hostile
-  passwords including quotes, backslashes, CJK, and `$(whoami)`.
-- **subPath, not a directory mount.** `/ragflow/conf` holds 17 other files
-  including `private.pem`; mounting the directory would shadow all of them.
-
-`mysql` and `gaussdb` are configured purely through env vars, so they get **no**
-initContainer — the chart asserts this in `ci/negative-tests.sh`.
+`mysql` and `gaussdb` are configured purely through env vars and get no
+initContainer — asserted in the negative tests.
 
 ### Admin server caveat
 
-`admin/server/config.py` `load_configurations()` has a `match` with
-`case "mysql"` but **no `case "postgres"`**, so the Admin panel will not show
-metadata-DB status on a PostgreSQL deployment. The main service is unaffected.
-`api.adminServer.enabled` defaults to `false`.
+`admin/server/config.py` has `case "mysql"` but no `case "postgres"`, so the
+Admin panel will not show metadata-DB status on a PostgreSQL deployment. The
+main service is unaffected; `api.adminServer.enabled` defaults to `false`.
 
-Note also that `--init-model-provider-tables` contains MySQL-only SQL; the chart
-skips it automatically for `gaussdb`, mirroring upstream `entrypoint.sh`.
+## Probes
+
+Verified against `api/apps/restful_apis/system_api.py`, both unauthenticated:
+
+- `/api/v1/system/ping` → liveness. No dependency checks, so a transient DB
+  blip never kills a healthy container.
+- `/api/v1/system/healthz` → readiness. Checks db + redis + doc_engine +
+  storage; 500 unless all four pass.
+
+The executor/datasync probes use `pgrep -f "[r]ag/svr/..."` — the character
+class is load-bearing: without it, pgrep matches the probe's own command line
+and the probe can never fail.
+
+Boot ordering is owned by a 10-minute startupProbe: `ensure_db_init()` runs
+before any worker spawns and can be slow on a cold cluster; Kubernetes holds
+liveness while the startupProbe is pending, so initialization is never
+interrupted by a probe race.
 
 ## Scaling
 
-`api` scales on CPU/memory. `executor` throughput is
-`replicaCount × workers`; CPU utilisation is a weak proxy for parsing backlog,
-so for real workloads drive it from Redis queue depth with KEDA:
+`api` scales on CPU/memory via the built-in HPA. For `executor`, throughput is
+`replicas × workers`; CPU is a poor proxy for parsing backlog, so drive it from
+Redis queue depth with KEDA — see `ci/values-keda-example.yaml` (the streams
+are `te.1.common` and `te.0.common`, consumer group
+`rag_flow_svr_task_broker`; RAGFlow uses Redis Streams, hence the
+`redis-streams` scaler).
 
-```yaml
-triggers:
-  - type: redis
-    metadata:
-      address: redis.data.svc:6379
-      listName: "te.0.common"
-      listLength: "5"
-```
-
-`executor.terminationGracePeriodSeconds` defaults to 4980s because a single
-parse task has a hard 80-minute timeout (`@timeout(60 * 80, 1)` on
-`build_chunks` in `rag/svr/task_executor.py`). Scaling in before a task finishes
-aborts it; Redis Streams redeliver the unacked message, so nothing is lost, but
-you pay for duplicate parsing. Lower the grace period only if your documents
-finish well inside it.
+`executor.terminationGracePeriodSeconds` defaults to 4980s: a single parse has
+a hard 80-minute timeout (`@timeout(60 * 80, 1)` on `build_chunks`). Scaling in
+earlier aborts in-flight tasks; Redis redelivers them, but you pay for
+duplicate parsing.
 
 ## Validation
 
 ```bash
-helm lint ./ragflow -f ragflow/ci/minimal-values.yaml
-# -ignore-missing-schemas is required: full-values enables the
-# ServiceMonitor CRD, whose schema is not in kubeconform's default set.
-helm template rf ./ragflow -f ragflow/ci/full-values.yaml \
-  | kubeconform -strict -summary -ignore-missing-schemas -
-bash ragflow/ci/negative-tests.sh ./ragflow
+make verify            # lint × 3 + kubeconform -strict + 28 negative assertions
+make verify-image      # 17 design-assumption checks against the real image
 ```
 
-The negative suite asserts the chart **refuses** to render on missing
-credentials, unknown `metadataDb.type`, unknown `docEngine.type`, and missing
-required hosts; that no password appears in rendered output; and that
-postgres/oceanbase get the render initContainer while mysql/gaussdb do not.
+`ci/negative-tests.sh` asserts the chart **refuses** to render on missing
+credentials, unknown backend types, or missing hosts; that no password ever
+appears in rendered output; and that postgres/oceanbase get the render
+initContainer while mysql/gaussdb do not.
 
-### Against the real image
+`ci/verify-image-assumptions.sh` checks the design assumptions (entrypoint
+flags, probe routes, distributed-lock absence, `PooledDatabase` enum) against
+the actual image, so a version bump that breaks one fails loudly.
 
-```bash
-# design assumptions (flags, probes, locks, enum members) — ~2 min
-make verify-image
+`ci/e2e-initcontainer.sh` runs the chart's **actual rendered** init script in
+the real image inside a cluster and asserts RAGFlow's own config loader reads
+the password back as an exact string.
 
-# full initContainer password round-trip inside a kind cluster — needs the
-# image loaded; slow under QEMU on arm64
-bash ragflow/ci/e2e-initcontainer.sh
-```
-
-`ci/e2e-initcontainer.sh` extracts the chart's **actual rendered** init script
-(via `helm template` + YAML parse, never hand-copied), runs it in the real
-image, and asserts that RAGFlow's own `common.settings` loader reads the
-password back as an exact string and constructs
-`RetryingPooledPostgresqlDatabase`.
-
-### Against a running deployment
-
-```bash
-bash ragflow/ci/verify-orchestration.sh <namespace>
-```
-
-Settles the claims only a live cluster can: StatefulSet ordinals are stable,
-each executor's Redis `host-id` equals its pod name, worker count is
-`replicaCount x workers`, datasync stays a singleton under `Recreate`, each role
-runs only its own processes, and — with a **negative control** — that the exec
-liveness probe can actually report unhealthy rather than always passing.
-
-## Security posture (read before deploying)
-
-The stock image runs its entrypoint as **root**, and the chart's defaults
-reflect that instead of pretending otherwise. Verified against v0.27.0:
-`entrypoint.sh` writes `/ragflow/conf/service_conf.yaml`, copies the nginx
-vhost into `/etc/nginx/conf.d/`, and nginx binds `:80` and writes
-`/var/log/nginx` - all root-owned `0755` paths; the image ships no non-root
-user. Forcing `runAsUser: 1000` makes every api pod CrashLoop within seconds.
-
-Consequences:
-
-- Pods will be **rejected** by a namespace enforcing PSA `restricted` (and by
-  any policy forcing `runAsNonRoot`). Deploy into an unlabeled or `baseline`
-  namespace, or rebuild the image first.
-- The **recommended hardening path** is an image rebuild: create a dedicated
-  user, `chown /ragflow` to it, switch nginx to a port >= 1024, then set
-  `podSecurityContext`/`containerSecurityContext` in values. The chart's
-  security fields are plain passthroughs, so no chart change is needed.
-
-A `readOnlyRootFilesystem` hard line is likewise impossible with the stock
-image (runtime writes to `/ragflow/conf`, `/ragflow/logs`, `/var/log/nginx`,
-`/var/run`).
+`ci/verify-orchestration.sh` settles the live-cluster claims: stable
+StatefulSet ordinals, `host-id` = pod name, worker count, datasync singleton
+under `Recreate`, role isolation — and, via a negative control, that the exec
+probe can actually report unhealthy.
 
 ## Known gaps
 
 - **No metrics endpoint.** RAGFlow ships no `/metrics` route and no Prometheus
-  instrumentation (verified in the v0.27.0 source), so the chart intentionally
-  has no ServiceMonitor. Scrape the Kubernetes API for pod-level signals, or
-  add instrumentation to the image yourself.
-- **Logs are ephemeral**, written to `/ragflow/logs` inside the container. Use a
-  node-level log collector.
-- **No backup tooling.** External dependencies own their own backups.
-- **`readOnlyRootFilesystem: false`** — the entrypoint writes
-  `service_conf.yaml` at startup. Tightening this needs an emptyDir overlay.
+  instrumentation (verified in v0.27.0), so the chart intentionally has no
+  ServiceMonitor. Scrape the Kubernetes API for pod-level signals.
+- **Logs are ephemeral** (`/ragflow/logs` in-container). Use a node-level
+  collector.
+- **`readOnlyRootFilesystem` cannot be enabled** with the stock image
+  (runtime writes to `/ragflow/conf`, `/ragflow/logs`, `/var/log/nginx`,
+  `/var/run`).
+- **First login**: `initSuperuser` (off by default) creates the admin account
+  from `DEFAULT_SUPERUSER_EMAIL` / `DEFAULT_SUPERUSER_PASSWORD` keys in your
+  Secret — the app's built-in defaults are `admin@ragflow.io` / `admin`, so
+  always set them. Without a superuser, open registration is required
+  (`api.registerEnabled`).
