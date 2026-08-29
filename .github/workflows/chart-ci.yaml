@@ -93,3 +93,26 @@ jobs:
             [ $? -eq 0 ] || leaked=1
           done
           [ "$leaked" -eq 0 ] && echo "ok: fixture passwords only in Secret resources"
+
+  # Full Helm lifecycle on a real Kubernetes API — kind on the runner, the
+  # role-faithful stub image (a few MB), no external dependencies. Proves what
+  # template checks cannot: install actually converges, workloads go Ready,
+  # hooks run, upgrade works, uninstall leaves only the documented hook
+  # resources. ~3 minutes.
+  e2e:
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: v4.2.4
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: chart-e2e
+
+      - name: Full lifecycle e2e
+        run: bash ./ragflow/ci/e2e-deploy.sh

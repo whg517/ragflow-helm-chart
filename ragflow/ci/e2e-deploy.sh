@@ -22,12 +22,17 @@
 # Usage:
 #   bash ci/e2e-deploy.sh                 # full lifecycle, stub image (fast)
 #   REAL_IMAGE=1 bash ci/e2e-deploy.sh    # real image (slow, needs ~4GB ram)
+#
+# E2E_CLUSTER=<name> reuses an existing kind cluster instead of creating one
+# (and then leaves it running); this is what CI does.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CHART_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-NAME="ragflow-e2e"
+NAME="${E2E_CLUSTER:-ragflow-e2e}"
 NS="$NAME"
+# Auto-created clusters are torn down on exit; pre-existing ones (CI) are not.
+CREATED_CLUSTER=0
 KEEP="${KEEP:-0}"
 
 STUB_IMAGE="ragflow-e2e-stub:ci"
@@ -40,13 +45,13 @@ ok()  { echo "  ok:   $1"; PASS=$((PASS+1)); }
 bad() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
 cleanup() {
-  if [ "$KEEP" != "1" ]; then
+  if [ "$CREATED_CLUSTER" = "1" ] && [ "$KEEP" != "1" ]; then
     echo
     echo "== teardown =="
     kind delete cluster --name "$NAME" >/dev/null 2>&1 || true
     docker rmi -f "$STUB_IMAGE" >/dev/null 2>&1 || true
   else
-    echo "KEEP=1: cluster '$NAME' left running"
+    echo "cluster '$NAME' left as-is (pre-existing or KEEP=1)"
   fi
 }
 trap cleanup EXIT
@@ -59,6 +64,7 @@ if kind get clusters 2>/dev/null | grep -qx "$NAME"; then
   echo "  reusing existing cluster '$NAME'"
 else
   kind create cluster --name "$NAME" --wait 90s >/dev/null 2>&1
+  CREATED_CLUSTER=1
   echo "  created kind cluster '$NAME'"
 fi
 kubectl config use-context "kind-$NAME" >/dev/null
