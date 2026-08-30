@@ -72,7 +72,7 @@ for t in mysql gaussdb postgres oceanbase; do
 done
 
 echo "--- password must never leak into rendered manifests ---"
-SECRET_PW="sup3r-s3cret-should-not-appear"
+SECRET_PW="EXAMPLE-not-a-real-secret"
 for t in postgres oceanbase; do
   out=$(helm template leak "$CHART" $BASE --set metadataDb.type=$t \
         --set existingSecret=creds 2>/dev/null)

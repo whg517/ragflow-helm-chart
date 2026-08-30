@@ -124,10 +124,17 @@ fi
 # ---------------------------------------------------------------- values
 section "install"
 kubectl create ns "$NS" >/dev/null 2>&1 || true
+# Fixture values are FAKE and chosen to be hostile to YAML parsing:
+# EXAMPLE-0O1234 looks numeric (would be octal if unquoted), EXAMPLE:colon*
+# has sigils/colons, EXAMPLE-12345678 is pure digits. No real system accepts
+# these; they exist only inside the throwaway kind cluster this script creates.
+E2E_MYSQL_PW='EXAMPLE-0O1234'
+E2E_REDIS_PW='EXAMPLE:colon*fake'
+E2E_MINIO_PW='EXAMPLE-12345678'
 kubectl -n "$NS" create secret generic e2e-creds \
-  --from-literal=MYSQL_PASSWORD='0012345' \
-  --from-literal=REDIS_PASSWORD='p@ss:word*1' \
-  --from-literal=MINIO_PASSWORD='12345678' \
+  --from-literal=MYSQL_PASSWORD="$E2E_MYSQL_PW" \
+  --from-literal=REDIS_PASSWORD="$E2E_REDIS_PW" \
+  --from-literal=MINIO_PASSWORD="$E2E_MINIO_PW" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
 cat > /tmp/e2e-values.yaml <<EOF
@@ -244,7 +251,7 @@ pod=$(kubectl -n "$NS" get pod -l app.kubernetes.io/component=executor -o name |
 content=$(kubectl -n "$NS" exec "$pod" -c ragflow-executor -- \
           cat /ragflow/conf/local.service_conf.yaml 2>/dev/null || true)
 if printf '%s' "$content" | grep -q 'postgres:' \
-   && printf '%s' "$content" | grep -q 'password: "0012345"'; then
+   && printf '%s' "$content" | grep -q "password: \"$E2E_MYSQL_PW\""; then
   ok "postgres section present, password quoted"
 else
   bad "service_conf missing or malformed"

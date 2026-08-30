@@ -1,8 +1,10 @@
 # Smallest config that renders: chart-managed secret, everything external.
+# All FAKE fixtures (EXAMPLE-* marker): numeric-looking, sigil-heavy strings
+# that prove the quoting logic. Nothing real.
 secretData:
-  MYSQL_PASSWORD: "12345678"
-  REDIS_PASSWORD: "test-redis-pass"
-  MINIO_PASSWORD: "test-minio-pass"
+  MYSQL_PASSWORD: "EXAMPLE-12345678"
+  REDIS_PASSWORD: "EXAMPLE:fake-redis*pass"
+  MINIO_PASSWORD: "EXAMPLE-fake-minio-0O9"
 
 metadataDb:
   host: mysql.example.svc

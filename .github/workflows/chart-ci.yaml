@@ -75,7 +75,11 @@ jobs:
             python3 - "$f" <<'PY'
           import sys, yaml
           f = sys.argv[1]
-          needles = ("0012345", "12345678", "p@ss:word*1",
+          needles = ("EXAMPLE-0O1234", "EXAMPLE-12345678",
+                     "EXAMPLE:colon*fake", "EXAMPLE:fake-redis*pass",
+                     "EXAMPLE-fake-minio-0O9",
+                     # legacy fixtures (pre-renaming commits)
+                     "0012345", "12345678", "p@ss:word*1",
                      "test-redis-pass", "test-minio-pass")
           bad = False
           for doc in yaml.safe_load_all(open(f"/tmp/{f}.yaml")):

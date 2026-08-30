@@ -15,7 +15,9 @@ IMAGE_TAG="${2:-v0.27.0}"
 CHART_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$CHART_DIR/.." && pwd)"
 NS=pg-e2e
-PW='0012345'   # hostile on purpose: int-looking, would be octal 5349 unquoted
+PW='EXAMPLE-0O1234'  # FAKE fixture. Hostile on purpose: numeric-looking
+                     # (would parse as octal int if unquoted), carries the
+                     # EXAMPLE marker so secret scanners ignore it.
 
 echo "== chart : $CHART_DIR"
 echo "== ctx   : $CTX"

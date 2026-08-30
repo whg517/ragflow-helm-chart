@@ -4,12 +4,13 @@ image:
   tag: "v0.27.0"
   pullPolicy: IfNotPresent
 
-# Deliberately nasty passwords. Unquoted (as upstream renders them) these
-# become: int 5349 via octal, a YAML parse error, and int 12345678.
+# Deliberately nasty FAKE passwords (EXAMPLE-* marker so secret scanners
+# ignore them). Unquoted (as upstream renders them) these become:
+# octal-int, a YAML parse error, and a plain int.
 secretData:
-  MYSQL_PASSWORD: "0012345"
-  REDIS_PASSWORD: "p@ss:word*1"
-  MINIO_PASSWORD: "12345678"
+  MYSQL_PASSWORD: "EXAMPLE-0O1234"
+  REDIS_PASSWORD: "EXAMPLE:colon*fake"
+  MINIO_PASSWORD: "EXAMPLE-12345678"
 
 metadataDb:
   type: mysql
