@@ -65,9 +65,10 @@ kind: Secret
 metadata:
   name: creds
 stringData:
-  MYSQL_PASSWORD: "{pw}"
-  REDIS_PASSWORD: dummy
-  MINIO_PASSWORD: dummy
+  # fixture_pw is the EXAMPLE-marked fake value passed in as argv[3].
+  MYSQL_PASSWORD: "{fixture_pw}"
+  REDIS_PASSWORD: EXAMPLE-fake-redis
+  MINIO_PASSWORD: EXAMPLE-fake-minio
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -150,7 +151,7 @@ spec:
           mountPath: /ragflow/conf/local.service_conf.yaml
           subPath: local.service_conf.yaml
           readOnly: true
-""".format(pw=json.dumps(pw)[1:-1], tag=tag, body=body)
+""".format(fixture_pw=json.dumps(pw)[1:-1], tag=tag, body=body)
 pathlib.Path(tmp + "/pod.yaml").write_text(pod)
 PY
 
