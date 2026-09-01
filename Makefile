@@ -40,6 +40,11 @@ verify-image:
 e2e:
 	bash $(CHART)/ci/e2e-deploy.sh
 
+# Required before 'helm dependency build' for fresh checkouts.
+repos:
+	helm repo add valkey https://valkey.io/valkey-helm/ 2>/dev/null || true
+	helm repo add opensearch https://opensearch-project.github.io/helm-charts/ 2>/dev/null || true
+
 verify: lint validate negative
 	@echo "all checks passed"
 
