@@ -39,6 +39,9 @@ jobs:
           tar xf kubeconform.tar.gz
           sudo mv kubeconform /usr/local/bin/
 
+      - name: Build chart dependencies
+        run: helm dependency build ./ragflow
+
       - name: Lint
         run: |
           for f in minimal full production; do

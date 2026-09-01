@@ -1,5 +1,8 @@
-# Packaged charts
+# Packaged root charts are built by CI/releases, never committed.
+# BUT packaged SUBCHARTS (ragflow/charts/*.tgz) must be committed - Chart.lock
+# references them by digest. The negation below keeps them tracked.
 *.tgz
+!ragflow/charts/*.tgz
 
 # Helm rendering scratch output
 *.rendered.yaml
