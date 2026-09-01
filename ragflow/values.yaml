@@ -118,6 +118,59 @@ docEngine:
     user: admin
 
 # -----------------------------------------------------------------------------
+# OPTIONAL built-in dependencies (all default OFF — the chart's default
+# posture is "all external").
+# -----------------------------------------------------------------------------
+# Valkey (official chart): provides REDIS_HOST when enabled. Credentials come
+# from existingSecret (REDIS_PASSWORD key) — the chart wires auth for you.
+valkey:
+  enabled: false
+  architecture: standalone
+  # ACL auth: a single `default` user whose password is the REDIS_PASSWORD key
+  # from your existingSecret — same credential RAGFlow reads, one source of
+  # truth, nothing in values. usersExistingSecret is injected by
+  # templates/common/_subchart-wiring.tpl at install time.
+  auth:
+    enabled: true
+    aclUsers:
+      default:
+        permissions: "~* &* +@all"
+        passwordKey: REDIS_PASSWORD
+
+# OpenSearch (official chart): provides OS_HOST when enabled AND
+# docEngine.type=opensearch. Heavy — size it for your cluster.
+opensearch:
+  enabled: false
+  # Single-node dev/profile config; production should override replicas,
+  # JVM heap and persistence.
+  singleNode: true
+
+# Built-in single-replica RustFS object storage (S3 API compatible).
+# Production should disable this and point storage.minio at a real cluster.
+rustfs:
+  enabled: false
+  image:
+    repository: rustfs/rustfs
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+  service:
+    type: ClusterIP
+    ports:
+      api: 9000
+      console: 9001
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+# -----------------------------------------------------------------------------
 # Shared, non-secret application env
 # -----------------------------------------------------------------------------
 env:

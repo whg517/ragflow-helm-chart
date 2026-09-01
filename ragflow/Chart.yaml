@@ -2,7 +2,7 @@ apiVersion: v2
 name: ragflow
 description: Production-grade Helm chart for RAGFlow with split api/executor/datasync workloads
 type: application
-version: 1.0.0
+version: 1.1.0
 appVersion: "v0.27.0"
 home: https://ragflow.io
 sources:
@@ -15,3 +15,23 @@ maintainers:
   - name: platform-team
 annotations:
   artifacthub.io/license: Apache-2.0
+
+# OPTIONAL dependencies. The chart's default posture is "all external": every
+# dependency here is disabled unless explicitly enabled. PostgreSQL stays
+# external — for production Postgres on Kubernetes use CloudNativePG
+# (https://cloudnative-pg.io) and point metadataDb at it.
+#
+# - valkey      Official Valkey chart (lightweight, single replica default).
+#               When enabled, the app is wired to it automatically.
+# - opensearch  Official OpenSearch chart. Heavy (~2GB+ RAM single node).
+#               When enabled AND docEngine.type=opensearch, the app is wired
+#               to it automatically.
+dependencies:
+  - name: valkey
+    version: 0.11.0
+    repository: https://valkey.io/valkey-helm/
+    condition: valkey.enabled
+  - name: opensearch
+    version: 3.1.0
+    repository: https://opensearch-project.github.io/helm-charts/
+    condition: opensearch.enabled

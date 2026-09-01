@@ -1,0 +1,129 @@
+{{- /* =============================================================================
+OPTIONAL built-in RustFS object storage (S3-compatible, MinIO-compatible API).
+
+This is a deliberate single-replica deployment: simple, stateless-to-configure,
+and enough to evaluate RAGFlow or run small workloads. For production object
+storage, leave storage.builtin.enabled=false and point at a real S3 cluster —
+RustFS speaks the S3 API, so any existing MinIO/S3 endpoint works unchanged.
+
+Credentials: the secret is chart-managed (from existingSecret keys
+MINIO_USER / MINIO_PASSWORD) so the same Secret that configures RAGFlow also
+configures RustFS. Nothing is stored in values.
+============================================================================= */}}
+{{- if .Values.rustfs.enabled }}
+{{- $fullname := include "ragflow.fullname" . }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullname }}-rustfs
+  labels:
+    {{- include "ragflow.componentLabels" (dict "root" . "component" "rustfs") | nindent 4 }}
+spec:
+  serviceName: {{ $fullname }}-rustfs
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ragflow.componentSelectorLabels" (dict "root" . "component" "rustfs") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ragflow.componentSelectorLabels" (dict "root" . "component" "rustfs") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "ragflow.serviceAccountName" . }}
+      {{- include "ragflow.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: rustfs
+          image: {{ .Values.rustfs.image.repository }}:{{ .Values.rustfs.image.tag }}
+          imagePullPolicy: {{ .Values.rustfs.image.pullPolicy }}
+          args:
+            - server
+            - /data
+            - --address
+            - "0.0.0.0:9000"
+            - --console-address
+            - "0.0.0.0:9001"
+          env:
+            {{- /* Root credentials come from the SAME Secret RAGFlow reads
+                   (MINIO_USER / MINIO_PASSWORD keys) so there is one source
+                   of truth. */}}
+            - name: RUSTFS_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ragflow.secretName" . }}
+                  key: MINIO_USER
+            - name: RUSTFS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ragflow.secretName" . }}
+                  key: MINIO_PASSWORD
+            - name: RUSTFS_VOLUMES
+              value: /data
+          ports:
+            - name: api
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          {{- with .Values.rustfs.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: api
+            initialDelaySeconds: 15
+            periodSeconds: 15
+      volumes:
+        - name: data
+          {{- if .Values.rustfs.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-rustfs
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+{{- if .Values.rustfs.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullname }}-rustfs
+  labels:
+    {{- include "ragflow.componentLabels" (dict "root" . "component" "rustfs") | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.rustfs.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.rustfs.persistence.size }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-rustfs
+  labels:
+    {{- include "ragflow.componentLabels" (dict "root" . "component" "rustfs") | nindent 4 }}
+spec:
+  type: {{ .Values.rustfs.service.type }}
+  selector:
+    {{- include "ragflow.componentSelectorLabels" (dict "root" . "component" "rustfs") | nindent 4 }}
+  ports:
+    - name: api
+      port: {{ .Values.rustfs.service.ports.api }}
+      targetPort: api
+    - name: console
+      port: {{ .Values.rustfs.service.ports.console }}
+      targetPort: console
+{{- end }}

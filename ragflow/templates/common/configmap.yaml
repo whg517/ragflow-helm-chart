@@ -36,16 +36,29 @@ data:
   {{- end }}
 
   {{- /* --- redis --- */}}
-  REDIS_HOST: {{ required "redis.host is required" .Values.redis.host | quote }}
+  {{- if .Values.valkey.enabled }}
+  {{- /* Built-in Valkey subchart: point at its in-cluster service.
+         Release-scoped fullname, single-replica architecture. */}}
+  REDIS_HOST: {{ printf "%s-valkey.%s.svc" .Release.Name .Release.Namespace | quote }}
+  REDIS_PORT: "6379"
+  {{- else }}
+  REDIS_HOST: {{ required "redis.host is required (or enable the built-in valkey subchart)" .Values.redis.host | quote }}
   REDIS_PORT: {{ .Values.redis.port | quote }}
   {{- with .Values.redis.username }}
   REDIS_USERNAME: {{ . | quote }}
   {{- end }}
+  {{- end }}
 
   {{- /* --- object storage --- */}}
   {{- if eq .Values.storage.type "minio" }}
-  MINIO_HOST: {{ required "storage.minio.host is required" .Values.storage.minio.host | quote }}
-  MINIO_PORT: {{ .Values.storage.minio.port | quote }}
+  {{- if .Values.rustfs.enabled }}
+  {{- /* Built-in RustFS: in-cluster service on the api port. Explicit
+         storage.minio.host still wins if someone sets both. */}}
+  MINIO_HOST: {{ default (printf "%s-rustfs.%s.svc" .Release.Name .Release.Namespace) .Values.storage.minio.host | quote }}
+  {{- else }}
+  MINIO_HOST: {{ required "storage.minio.host is required (or enable the built-in rustfs)" .Values.storage.minio.host | quote }}
+  {{- end }}
+  MINIO_PORT: {{ default 9000 .Values.storage.minio.port | quote }}
   MINIO_USER: {{ .Values.storage.minio.user | quote }}
   MINIO_ROOT_USER: {{ .Values.storage.minio.user | quote }}
   MINIO_SECURE: {{ .Values.storage.minio.secure | quote }}

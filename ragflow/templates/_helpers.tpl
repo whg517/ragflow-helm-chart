@@ -129,9 +129,16 @@ ES_HOST: {{ required "docEngine.elasticsearch.host is required when type=elastic
 ES_PORT: {{ $e.elasticsearch.port | default 9200 | quote }}
 ES_USER: {{ $e.elasticsearch.user | default "elastic" | quote }}
 {{- else if eq $e.type "opensearch" }}
-OS_HOST: {{ required "docEngine.opensearch.host is required when type=opensearch" $e.opensearch.host | quote }}
+{{- if .Values.opensearch.enabled }}
+{{- /* Built-in OpenSearch subchart: in-cluster service, port 9200. */}}
+OS_HOST: {{ printf "%s-opensearch.%s.svc" .Release.Name .Release.Namespace | quote }}
+OS_PORT: "9200"
+OS_USER: {{ $e.opensearch.user | default "admin" | quote }}
+{{- else }}
+OS_HOST: {{ required "docEngine.opensearch.host is required when type=opensearch (or enable the built-in opensearch subchart)" $e.opensearch.host | quote }}
 OS_PORT: {{ $e.opensearch.port | default 9201 | quote }}
 OS_USER: {{ $e.opensearch.user | default "admin" | quote }}
+{{- end }}
 {{- else }}
 {{- fail (printf "docEngine.type must be one of: infinity, elasticsearch, opensearch (got %q)" $e.type) }}
 {{- end }}
