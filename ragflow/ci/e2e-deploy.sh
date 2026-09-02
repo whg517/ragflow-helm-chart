@@ -238,8 +238,10 @@ fi
 section "preflight ran on every workload"
 for w in api executor datasync; do
   pod=$(kubectl -n "$NS" get pod -l "app.kubernetes.io/component=$w" -o name | head -1)
-  if kubectl -n "$NS" logs "$pod" -c preflight-credentials 2>/dev/null \
-     | grep -q "preflight ok"; then
+  # Capture first, grep second: `kubectl | grep -q` gets kubectl killed by
+  # SIGPIPE when grep exits early (exit 141 aborts the script under -e).
+  logs=$(kubectl -n "$NS" logs "$pod" -c preflight-credentials 2>/dev/null || true)
+  if printf '%s' "$logs" | grep -q "preflight ok"; then
     ok "$w preflight ok"
   else
     bad "$w preflight missing/failed"
