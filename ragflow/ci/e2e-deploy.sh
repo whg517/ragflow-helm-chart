@@ -15,6 +15,7 @@
 #   -> datasync singleton survives a rolling upgrade (Recreate, never 2 pods)
 #   -> helm upgrade works and old pod specs are replaced
 #   -> uninstall leaves ONLY the documented hook resources behind
+#   -> postgres.builtin auto-derives metadataDb.host when enabled
 #
 # This script drives a real kind cluster with stub or real image. It creates
 # and tears down its own cluster unless told to reuse one.
@@ -257,6 +258,42 @@ if printf '%s' "$content" | grep -q 'postgres:' \
   ok "postgres section present, password quoted"
 else
   bad "service_conf missing or malformed"
+fi
+
+section "postgres.builtin: auto-derived host wiring"
+# Re-render with the builtin DB and no external host; the config must point
+# at the in-cluster service. Rendered check only (the stub does not connect
+# to a real postgres), but it exercises the wiring path end-to-end through
+# the chart.
+helm template rf2 "$CHART_DIR" -n "$NS" \
+  --set image.repository="${IMAGE%%:*}" \
+  --set image.tag="${IMAGE##*:}" \
+  --set existingSecret=e2e-creds \
+  --set metadataDb.type=postgres \
+  --set metadataDb.user=ragflow \
+  --set metadataDb.postgres.builtin.enabled=true \
+  --set redis.host=redis.e2e.svc \
+  --set storage.minio.host=minio.e2e.svc \
+  --set docEngine.type=infinity \
+  --set docEngine.infinity.host=infinity.e2e.svc \
+  > /tmp/e2e-pgb.yaml
+pgb_host=$(grep -E "^  MYSQL_HOST:" /tmp/e2e-pgb.yaml | head -1 | sed 's/.*: *//' | tr -d '"')
+# The invariant: MYSQL_HOST == <postgres StatefulSet fullname>.<ns>.svc.
+# helm emits "# Source: ragflow/templates/<path>" before each document; grab
+# the name from the postgres statefulset document via that anchor (no pyyaml
+# dependency on the runner).
+STS_NAME=$(grep -oE "  name: [a-z0-9-]+-postgres$" /tmp/e2e-pgb.yaml \
+  | head -1 | sed 's/  name: //')
+if [ -n "$STS_NAME" ]; then
+  ok "builtin postgres StatefulSet rendered ($STS_NAME)"
+else
+  bad "builtin postgres StatefulSet missing"
+fi
+expected_host="$STS_NAME.$NS.svc"
+if [ "$pgb_host" = "$expected_host" ]; then
+  ok "MYSQL_HOST auto-derived correctly ($pgb_host)"
+else
+  bad "MYSQL_HOST is '$pgb_host', expected '$expected_host'"
 fi
 
 section "api serves HTTP through nginx-equivalent path"

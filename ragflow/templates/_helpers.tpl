@@ -287,3 +287,26 @@ checksum/service-conf: {{ include "ragflow.serviceConfInitScript" . | sha256sum 
 checksum/llm-factories: {{ include (print $.Template.BasePath "/common/configmap-service-conf.yaml") . | sha256sum }}
 {{- end }}
 {{- end }}
+
+{{/*
+Mirror of the valkey subchart's fullname rule, so our REDIS_HOST matches the
+service name the subchart actually creates. Upstream: if the release name
+contains "valkey", the release name IS the fullname; otherwise
+"<release>-valkey".
+*/}}
+{{- define "ragflow.valkeyFullname" -}}
+{{- if .Values.valkey.fullnameOverride -}}
+{{- .Values.valkey.fullnameOverride | trunc 63 | trimSuffix "-" -}}
+{{- else if .Values.valkey.nameOverride -}}
+{{- $n := .Values.valkey.nameOverride -}}
+{{- if contains $n .Release.Name -}}
+{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- printf "%s-%s" .Release.Name $n | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- else if contains "valkey" .Release.Name -}}
+{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- printf "%s-valkey" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end }}

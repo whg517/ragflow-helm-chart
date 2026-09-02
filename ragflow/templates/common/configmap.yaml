@@ -32,7 +32,7 @@ data:
   {{- if .Values.metadataDb.postgres.builtin.enabled }}
   {{- /* Built-in Postgres: in-cluster service. An explicit metadataDb.host
          still wins if someone sets both. */}}
-  MYSQL_HOST: {{ default (printf "%s-postgres.%s.svc" .Release.Name .Release.Namespace) .Values.metadataDb.host | quote }}
+  MYSQL_HOST: {{ default (printf "%s.%s.svc" (include "ragflow.componentName" (dict "root" $ "component" "postgres")) .Release.Namespace) .Values.metadataDb.host | quote }}
   {{- else }}
   MYSQL_HOST: {{ required "metadataDb.host is required (or enable postgres.builtin)" .Values.metadataDb.host | quote }}
   {{- end }}
@@ -45,7 +45,7 @@ data:
   {{- if .Values.valkey.enabled }}
   {{- /* Built-in Valkey subchart: point at its in-cluster service.
          Release-scoped fullname, single-replica architecture. */}}
-  REDIS_HOST: {{ printf "%s-valkey.%s.svc" .Release.Name .Release.Namespace | quote }}
+  REDIS_HOST: {{ printf "%s.%s.svc" (include "ragflow.valkeyFullname" .) .Release.Namespace | quote }}
   REDIS_PORT: "6379"
   {{- else }}
   REDIS_HOST: {{ required "redis.host is required (or enable the built-in valkey subchart)" .Values.redis.host | quote }}
@@ -60,7 +60,7 @@ data:
   {{- if .Values.rustfs.enabled }}
   {{- /* Built-in RustFS: in-cluster service on the api port. Explicit
          storage.minio.host still wins if someone sets both. */}}
-  MINIO_HOST: {{ default (printf "%s-rustfs.%s.svc" .Release.Name .Release.Namespace) .Values.storage.minio.host | quote }}
+  MINIO_HOST: {{ default (printf "%s.%s.svc" (include "ragflow.componentName" (dict "root" $ "component" "rustfs")) .Release.Namespace) .Values.storage.minio.host | quote }}
   {{- else }}
   MINIO_HOST: {{ required "storage.minio.host is required (or enable the built-in rustfs)" .Values.storage.minio.host | quote }}
   {{- end }}
