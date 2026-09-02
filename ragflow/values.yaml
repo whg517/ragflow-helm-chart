@@ -71,6 +71,32 @@ metadataDb:
   postgres:
     maxConnections: 100
     staleTimeout: 30
+    # Built-in single-replica PostgreSQL (official image). Provides
+    # metadataDb.host automatically when enabled — the app points at the
+    # in-cluster service. Single replica, no HA: for production use
+    # CloudNativePG (https://cloudnative-pg.io) or a managed database and
+    # leave this off.
+    #
+    # Password: POSTGRES_PASSWORD is sourced from the MYSQL_PASSWORD key of
+    # your existingSecret (the same credential RAGFlow reads) — never set it
+    # here.
+    builtin:
+      # Enable with: --set metadataDb.postgres.builtin.enabled=true
+      enabled: false
+      image:
+        repository: postgres
+        tag: "17"
+        pullPolicy: IfNotPresent
+      persistence:
+        size: 20Gi
+        storageClass: ""
+      resources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: "1"
+          memory: 1Gi
   # For type=gaussdb the app reads GAUSSDB_METADATA_* env vars instead of
   # service_conf; the chart maps these fields onto them automatically.
   gaussdb:

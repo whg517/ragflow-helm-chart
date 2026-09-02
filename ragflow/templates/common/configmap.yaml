@@ -29,7 +29,13 @@ data:
   {{- else }}
   {{- /* mysql / postgres / oceanbase all resolve through service_conf.yaml,
          whose template interpolates these MYSQL_* vars. */}}
-  MYSQL_HOST: {{ required "metadataDb.host is required" .Values.metadataDb.host | quote }}
+  {{- if .Values.metadataDb.postgres.builtin.enabled }}
+  {{- /* Built-in Postgres: in-cluster service. An explicit metadataDb.host
+         still wins if someone sets both. */}}
+  MYSQL_HOST: {{ default (printf "%s-postgres.%s.svc" .Release.Name .Release.Namespace) .Values.metadataDb.host | quote }}
+  {{- else }}
+  MYSQL_HOST: {{ required "metadataDb.host is required (or enable postgres.builtin)" .Values.metadataDb.host | quote }}
+  {{- end }}
   MYSQL_PORT: {{ include "ragflow.metadataDbPort" . | quote }}
   MYSQL_USER: {{ .Values.metadataDb.user | quote }}
   MYSQL_DBNAME: {{ .Values.metadataDb.database | quote }}

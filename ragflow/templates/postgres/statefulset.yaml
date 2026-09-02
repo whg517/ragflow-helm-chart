@@ -1,0 +1,113 @@
+{{- /* =============================================================================
+OPTIONAL built-in PostgreSQL for the metadata database (metadataDb.type=postgres).
+
+Single-replica StatefulSet with a PVC — enough for evaluation and small teams.
+For production Postgres, leave postgres.builtin.enabled=false and run
+CloudNativePG (https://cloudnative-pg.io) or a managed database, pointing
+metadataDb at it.
+
+Credential model: the Postgres superuser password is the MYSQL_PASSWORD key
+from your existingSecret (the same key RAGFlow reads). The initdb runs with
+POSTGRES_PASSWORD from that Secret and POSTGRES_USER/DATABASE from
+metadataDb.*, so RAGFlow's generated local.service_conf.yaml matches the
+server on first boot. Nothing is stored in values.
+============================================================================= */}}
+{{- if .Values.metadataDb.postgres.builtin.enabled }}
+{{- $fullname := include "ragflow.fullname" . }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullname }}-postgres
+  labels:
+    {{- include "ragflow.componentLabels" (dict "root" . "component" "postgres") | nindent 4 }}
+spec:
+  serviceName: {{ $fullname }}-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ragflow.componentSelectorLabels" (dict "root" . "component" "postgres") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ragflow.componentSelectorLabels" (dict "root" . "component" "postgres") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "ragflow.serviceAccountName" . }}
+      {{- include "ragflow.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: postgres
+          image: {{ .Values.metadataDb.postgres.builtin.image.repository }}:{{ .Values.metadataDb.postgres.builtin.image.tag }}
+          imagePullPolicy: {{ .Values.metadataDb.postgres.builtin.image.pullPolicy }}
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.metadataDb.user | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.metadataDb.database | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ragflow.secretName" . }}
+                  key: MYSQL_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: pg
+              containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          {{- with .Values.metadataDb.postgres.builtin.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pg_isready -U {{ .Values.metadataDb.user | quote }} -d {{ .Values.metadataDb.database | quote }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pg_isready -U {{ .Values.metadataDb.user | quote }} -d {{ .Values.metadataDb.database | quote }}
+            initialDelaySeconds: 30
+            periodSeconds: 15
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-postgres
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullname }}-postgres
+  labels:
+    {{- include "ragflow.componentLabels" (dict "root" . "component" "postgres") | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.metadataDb.postgres.builtin.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.metadataDb.postgres.builtin.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-postgres
+  labels:
+    {{- include "ragflow.componentLabels" (dict "root" . "component" "postgres") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "ragflow.componentSelectorLabels" (dict "root" . "component" "postgres") | nindent 4 }}
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: pg
+{{- end }}

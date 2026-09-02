@@ -42,6 +42,24 @@ Makefile                  make verify / verify-image
 .github/workflows/        CI: lint + kubeconform + 28 negative assertions
 ```
 
+## Optional built-in dependencies
+
+The chart installs only RAGFlow by default. Enable any of these to have the
+chart deploy them alongside (credentials still come exclusively from your
+Secret):
+
+```yaml
+valkey:      {enabled: true}     # in-cluster Redis-compatible cache
+postgres:
+  builtin:   {enabled: true}     # in-cluster metadata DB (single replica)
+rustfs:      {enabled: true}     # in-cluster S3-compatible object storage
+opensearch:  {enabled: true}     # + docEngine.type=opensearch
+```
+
+Single replicas, no HA — evaluation and small deployments. Production should
+keep them off and point at dedicated clusters. Details in
+[`ragflow/README.md`](ragflow/README.md#prerequisites).
+
 ## Quick start
 
 ```bash

@@ -62,12 +62,35 @@ Consequences:
 
 ## Prerequisites
 
-Kubernetes ≥ 1.23, Helm ≥ 3.8, and these **external** services:
+Kubernetes ≥ 1.23, Helm ≥ 3.8. Everything else is **external by default**:
 
 - Metadata DB: MySQL 8.x, PostgreSQL, OceanBase, or GaussDB
 - Redis / Valkey
 - S3-compatible object storage
 - Doc engine: Infinity, Elasticsearch 8.x, or OpenSearch 2.x
+
+Three of these can be installed **by the chart itself** (all default off):
+
+| Switch | What you get | Wired automatically |
+|---|---|---|
+| `valkey.enabled=true` | Official Valkey chart, single replica | `REDIS_HOST` → in-cluster service |
+| `postgres.builtin.enabled=true` | Official `postgres:17` image, single replica + PVC | `MYSQL_HOST` → in-cluster service (works with `metadataDb.type=postgres`) |
+| `rustfs.enabled=true` | Built-in RustFS StatefulSet (S3 API) | `MINIO_HOST` → in-cluster service |
+| `opensearch.enabled=true` (+ `docEngine.type=opensearch`) | Official OpenSearch chart, single node | `OS_HOST` → in-cluster service |
+
+All credentials come from the same `existingSecret` — the built-in services
+read the identical keys RAGFlow reads (`REDIS_PASSWORD`, `MINIO_*`,
+`MYSQL_PASSWORD`), so there is one credential source for the whole stack.
+
+Scaling truth in this mode: valkey/rustfs/postgres built-ins are **single
+replica without HA**. They exist for evaluation and small deployments. For
+production keep them off and use dedicated clusters (CloudNativePG for
+Postgres, Sentinel/Cluster for Redis, a real S3 or distributed RustFS for
+objects, a multi-node OpenSearch).
+
+PostgreSQL stays external even in all-in-one mode — for production-grade
+Postgres on Kubernetes use [CloudNativePG](https://cloudnative-pg.io) and
+point `metadataDb.host` at it.
 
 The image is ~3.2 GB compressed. Pre-pull or mirror it; the startupProbe
 allows up to 10 minutes for a cold boot.
