@@ -99,7 +99,15 @@ helm upgrade --install ragflow "$CHART_DIR" -n "$NS" \
   --set executor.resources.limits.memory=1536Mi \
   --set postgres.builtin.resources.requests.memory=512Mi \
   --set rustfs.resources.requests.memory=256Mi \
-  --timeout 10m >/dev/null
+  --timeout 10m; then
+  echo; echo "== INSTALL FAILED: dumping diagnostics =="
+  kubectl -n "$NS" get pods -o wide 2>/dev/null | sed 's/^/    /' || true
+  for p in $(kubectl -n "$NS" get pods --no-headers -o name 2>/dev/null); do
+    echo "---- $p ----"
+    kubectl -n "$NS" logs "$p" --all-containers --tail=30 2>&1 | sed 's/^/    /' || true
+  done
+  exit 1
+fi
 ok "helm install completed"
 
 section "all workloads converge"
