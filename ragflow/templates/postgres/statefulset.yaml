@@ -20,6 +20,13 @@ metadata:
   name: {{ $fullname }}-postgres
   labels:
     {{- include "ragflow.componentLabels" (dict "root" . "component" "postgres") | nindent 4 }}
+  annotations:
+    {{- /* Hook resource at weight -7: created after the -10 credential
+           hooks and BEFORE the -5 migration Job, so the database exists
+           (and gets a head start booting) when migrations run. */}}
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-7"
+    "helm.sh/hook-delete-policy": before-hook-creation
 spec:
   serviceName: {{ $fullname }}-postgres
   replicas: 1
@@ -86,6 +93,10 @@ metadata:
   name: {{ $fullname }}-postgres
   labels:
     {{- include "ragflow.componentLabels" (dict "root" . "component" "postgres") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-7"
+    "helm.sh/hook-delete-policy": before-hook-creation
 spec:
   accessModes:
     - ReadWriteOnce
@@ -102,6 +113,10 @@ metadata:
   name: {{ $fullname }}-postgres
   labels:
     {{- include "ragflow.componentLabels" (dict "root" . "component" "postgres") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-7"
+    "helm.sh/hook-delete-policy": before-hook-creation
 spec:
   type: ClusterIP
   selector:

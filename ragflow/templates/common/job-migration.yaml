@@ -43,6 +43,32 @@ spec:
         {{- /* Fails fast with a message that names the missing key, instead of
                letting it surface as a late crash. */}}
         {{- include "ragflow.preflightInitContainer" . | nindent 8 }}
+        {{- if and (eq .Values.metadataDb.type "postgres") .Values.metadataDb.postgres.builtin.enabled }}
+        {{- /* Built-in postgres boots as a hook resource before this Job, but
+               "created" != "accepting connections". Block until it is. */}}
+        - name: wait-for-postgres
+          image: {{ include "ragflow.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+          command: ["python3", "-c"]
+          args:
+            - |
+              import socket, sys, time
+              host = "{{ include "ragflow.fullname" . }}"
+              for i in range(60):
+                  try:
+                      socket.create_connection((host, 5432), timeout=2).close()
+                      print("postgres is accepting connections")
+                      sys.exit(0)
+                  except OSError:
+                      time.sleep(2)
+              print("FATAL: postgres not reachable after ~120s", file=sys.stderr)
+              sys.exit(1)
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 32Mi}
+        {{- end }}
         {{- if include "ragflow.needsGeneratedServiceConf" . }}
         {{- include "ragflow.serviceConfInitContainer" . | nindent 8 }}
         {{- end }}
