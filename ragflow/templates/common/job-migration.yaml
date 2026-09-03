@@ -89,9 +89,13 @@ spec:
             - "--init-superuser"
             {{- end }}
             {{- if .Values.migration.initModelProviderTables }}
-            {{- /* Upstream skips these MySQL-only migrations for gaussdb;
-                   mirror that so the job doesn't fail on a non-MySQL backend. */}}
-            {{- if ne .Values.metadataDb.type "gaussdb" }}
+            {{- /* The model-provider migrations are MySQL-only SQL
+                   (tools/scripts/mysql_migration.py, executed via pymysql).
+                   Upstream skips them for gaussdb; postgres must skip them
+                   too — verified on v0.27.0: with DB_TYPE=postgres the script
+                   still opens a pymysql connection and dies with
+                   "Lost connection to MySQL server during query". */}}
+            {{- if eq .Values.metadataDb.type "mysql" }}
             - "--init-model-provider-tables"
             {{- end }}
             {{- end }}
