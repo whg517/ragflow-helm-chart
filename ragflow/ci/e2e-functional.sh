@@ -59,6 +59,57 @@ kubectl config use-context "kind-$NAME" >/dev/null
 kind load docker-image "$REAL" --name "$NAME" >/dev/null
 echo "  loaded $REAL into kind"
 
+section "deploy in-cluster infinity (doc engine)"
+kubectl apply -f - <<'EOF'
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: infinity
+spec:
+  serviceName: infinity
+  replicas: 1
+  selector:
+    matchLabels: {app: infinity}
+  template:
+    metadata:
+      labels: {app: infinity}
+    spec:
+      containers:
+        - name: infinity
+          image: infiniflow/infinity:v0.7.0
+          ports:
+            - containerPort: 23817
+            - containerPort: 23820
+          resources:
+            requests: {cpu: 200m, memory: 1Gi}
+            limits: {cpu: "1", memory: 2Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: infinity
+spec:
+  selector: {app: infinity}
+  ports:
+    - name: thrift
+      port: 23817
+      targetPort: 23817
+EOF
+kubectl -n default wait --for=condition=Ready pod -l app=infinity --timeout=300s >/dev/null 2>&1 \
+  && echo "  infinity Ready" || echo "  infinity NOT ready (continuing; healthz will show doc_engine=nok)"
+# The chart runs in $NS; infinity runs in default ns. The app resolves
+# infinity-func.svc — so create an ExternalName service mapping it.
+kubectl -n "$NS" apply -f - <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: infinity-func
+spec:
+  type: ExternalName
+  externalName: infinity.default.svc.cluster.local
+EOF
+echo "  ExternalName svc infinity-func -> infinity.default.svc"
+
 section "install chart with all built-ins on"
 kubectl create ns "$NS" >/dev/null
 kubectl -n "$NS" create secret generic ragflow-creds \
