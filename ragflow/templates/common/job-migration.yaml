@@ -55,7 +55,7 @@ spec:
           args:
             - |
               import socket, sys, time
-              host = "{{ include "ragflow.fullname" . }}"
+              host = "{{ include "ragflow.fullname" . }}-postgres"
               for i in range(60):
                   try:
                       socket.create_connection((host, 5432), timeout=2).close()
