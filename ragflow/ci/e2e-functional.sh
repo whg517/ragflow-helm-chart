@@ -64,6 +64,7 @@ kubectl create ns "$NS" >/dev/null
 kubectl -n "$NS" create secret generic ragflow-creds \
   --from-literal=MYSQL_PASSWORD='EXAMPLE-func-pass' \
   --from-literal=REDIS_PASSWORD='EXAMPLE-func-pass' \
+  --from-literal=MINIO_USER='ragflow' \
   --from-literal=MINIO_PASSWORD='EXAMPLE-func-pass' \
   >/dev/null
 
