@@ -40,11 +40,11 @@ jobs:
 
       - name: Run functional e2e against the real image
         env:
-          REAL_IMAGE: "1"
+          E2E_CLUSTER: ragflow-func
+        # Tee to a file so the failure-evidence upload step has real logs.
         run: |
-          # The functional script loads infiniflow/ragflow:v0.27.0 itself;
-          # on the runner the pull comes from Docker Hub directly.
-          bash ./ragflow/ci/e2e-functional.sh
+          set -o pipefail
+          bash ./ragflow/ci/e2e-functional.sh 2>&1 | tee /tmp/func-e2e.log
 
       - name: Upload failure evidence
         if: failure()
