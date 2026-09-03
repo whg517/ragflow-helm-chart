@@ -72,7 +72,7 @@ kubectl -n "$NS" create secret generic ragflow-creds \
 # test we accept healthz=500 on doc_engine and assert the OTHER three
 # dependencies pass (db/redis/storage) plus registration+KB creation, which
 # don't need the doc engine.
-helm upgrade --install ragflow "$CHART_DIR" -n "$NS" \
+if ! helm upgrade --install ragflow "$CHART_DIR" -n "$NS" \
   --set image.repository="${REAL%%:*}" \
   --set image.tag="${REAL##*:}" \
   --set existingSecret=ragflow-creds \
