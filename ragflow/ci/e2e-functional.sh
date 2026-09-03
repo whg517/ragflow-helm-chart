@@ -112,13 +112,20 @@ fi
 ok "helm install completed"
 
 section "all workloads converge"
-for w in api executor datasync postgres rustfs; do
+for w in api executor datasync postgres rustfs valkey; do
   if kubectl -n "$NS" wait --for=condition=Ready pod \
       -l "app.kubernetes.io/component=$w" --timeout=600s >/dev/null 2>&1; then
     ok "$w Ready"
   else
-    bad "$w not Ready"
+    bad "$w not Ready — dumping diagnostics"
     kubectl -n "$NS" get pods | sed 's/^/    /'
+    for p in $(kubectl -n "$NS" get pod -l "app.kubernetes.io/component=$w" \
+               --no-headers -o name 2>/dev/null); do
+      echo "    ---- $p events ----"
+      kubectl -n "$NS" describe "$p" 2>/dev/null | tail -8 | sed 's/^/      /'
+      echo "    ---- $p logs (all containers) ----"
+      kubectl -n "$NS" logs "$p" --all-containers --tail=40 2>&1 | sed 's/^/      /' || true
+    done
   fi
 done
 
