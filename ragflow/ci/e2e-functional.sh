@@ -22,16 +22,21 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CHART_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-NAME="ragflow-func"
-NS="ragflow-func"
+NAME="${E2E_CLUSTER:-ragflow-func}"
+NS="$NAME"
 REAL="infiniflow/ragflow:v0.27.0"
 PASS=0; FAIL=0
 ok()  { echo "  ok:   $1"; PASS=$((PASS+1)); }
 bad() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
+CREATED_CLUSTER=0
 cleanup() {
-  echo; echo "== teardown =="
-  kind delete cluster --name "$NAME" >/dev/null 2>&1 || true
+  if [ "$CREATED_CLUSTER" = "1" ]; then
+    echo; echo "== teardown =="
+    kind delete cluster --name "$NAME" >/dev/null 2>&1 || true
+  else
+    echo "cluster '$NAME' left as-is (pre-existing)"
+  fi
 }
 trap cleanup EXIT
 
@@ -43,7 +48,13 @@ docker image inspect "$REAL" >/dev/null 2>&1 || docker pull "$REAL" >/dev/null
 echo "  real image present: $REAL"
 
 section "cluster + images"
-kind create cluster --name "$NAME" --wait 120s >/dev/null 2>&1
+if kind get clusters 2>/dev/null | grep -qx "$NAME"; then
+  echo "  reusing existing cluster '$NAME'"
+else
+  kind create cluster --name "$NAME" --wait 120s >/dev/null 2>&1
+  CREATED_CLUSTER=1
+  echo "  created kind cluster '$NAME'"
+fi
 kubectl config use-context "kind-$NAME" >/dev/null
 kind load docker-image "$REAL" --name "$NAME" >/dev/null
 echo "  loaded $REAL into kind"

@@ -1,0 +1,55 @@
+name: chart-e2e-functional
+
+# Real-image functional test: kind cluster + chart built-ins (postgres,
+# valkey, rustfs) + actual RAGFlow user journey (register -> login ->
+# create dataset -> healthz). Too slow (~15 min, 3.4GB image load) for
+# every push, so it runs on demand and nightly.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *" # daily 03:00 UTC
+
+concurrency:
+  group: chart-e2e-functional-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  functional:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: v4.2.4
+
+      - name: Add dependency chart repositories
+        run: |
+          helm repo add valkey https://valkey.io/valkey-helm/
+          helm repo add opensearch https://opensearch-project.github.io/helm-charts/
+
+      - name: Build chart dependencies
+        run: helm dependency build ./ragflow
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: chart-func
+
+      - name: Run functional e2e against the real image
+        env:
+          REAL_IMAGE: "1"
+        run: |
+          # The functional script loads infiniflow/ragflow:v0.27.0 itself;
+          # on the runner the pull comes from Docker Hub directly.
+          bash ./ragflow/ci/e2e-functional.sh
+
+      - name: Upload failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-e2e-logs
+          path: /tmp/func-*.log
+          if-no-files-found: ignore
