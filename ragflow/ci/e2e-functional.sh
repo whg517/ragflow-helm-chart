@@ -24,7 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CHART_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 NAME="${E2E_CLUSTER:-ragflow-func}"
 NS="$NAME"
-REAL="infiniflow/ragflow:v0.27.0"
+REAL="${REAL_IMAGE_OVERRIDE:-infiniflow/ragflow:v0.27.0}"
 PASS=0; FAIL=0
 ok()  { echo "  ok:   $1"; PASS=$((PASS+1)); }
 bad() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
@@ -45,6 +45,7 @@ section() { echo; echo "== $1 =="; }
 section "prerequisites"
 command -v kind >/dev/null || { echo "kind required"; exit 1; }
 docker image inspect "$REAL" >/dev/null 2>&1 || docker pull "$REAL" >/dev/null
+echo "  image arch: $(docker image inspect "$REAL" --format '{{.Architecture}}')"
 echo "  real image present: $REAL"
 
 section "cluster + images"
@@ -58,6 +59,8 @@ fi
 kubectl config use-context "kind-$NAME" >/dev/null
 kind load docker-image "$REAL" --name "$NAME" >/dev/null
 echo "  loaded $REAL into kind"
+
+kubectl create ns "$NS" >/dev/null 2>&1 || true
 
 section "deploy in-cluster infinity (doc engine)"
 kubectl apply -f - <<'EOF'
@@ -111,7 +114,7 @@ EOF
 echo "  ExternalName svc infinity-func -> infinity.default.svc"
 
 section "install chart with all built-ins on"
-kubectl create ns "$NS" >/dev/null
+kubectl create ns "$NS" >/dev/null 2>&1 || true
 kubectl -n "$NS" create secret generic ragflow-creds \
   --from-literal=MYSQL_PASSWORD='EXAMPLE-func-pass' \
   --from-literal=REDIS_PASSWORD='EXAMPLE-func-pass' \
