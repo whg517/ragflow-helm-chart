@@ -155,7 +155,7 @@ fi
 ok "helm install completed"
 
 section "all workloads converge"
-for w in api executor datasync postgres rustfs valkey; do
+for w in api executor datasync postgres rustfs; do
   if kubectl -n "$NS" wait --for=condition=Ready pod \
       -l "app.kubernetes.io/component=$w" --timeout=600s >/dev/null 2>&1; then
     ok "$w Ready"
@@ -171,6 +171,20 @@ for w in api executor datasync postgres rustfs valkey; do
     done
   fi
 done
+# valkey subchart uses component=primary, not component=valkey.
+if kubectl -n "$NS" wait --for=condition=Ready pod \
+    -l "app.kubernetes.io/component=primary,app.kubernetes.io/name=valkey" \
+    --timeout=600s >/dev/null 2>&1; then
+  ok "valkey Ready"
+else
+  bad "valkey not Ready — dumping diagnostics"
+  kubectl -n "$NS" get pods | sed 's/^/    /'
+  for p in $(kubectl -n "$NS" get pod -l "app.kubernetes.io/name=valkey" \
+             --no-headers -o name 2>/dev/null); do
+    echo "    ---- $p logs ----"
+    kubectl -n "$NS" logs "$p" --tail=20 2>&1 | sed 's/^/      /' || true
+  done
+fi
 
 section "RAGFlow actually connected to built-in dependencies"
 API_POD=$(kubectl -n "$NS" get pod -l app.kubernetes.io/component=api -o name | head -1)
@@ -206,7 +220,7 @@ cipher = Cipher_PKCS1_v1_5.new(pub)
 import sys
 print(base64.b64encode(cipher.encrypt(sys.argv[1].encode())).decode())
 '
-ENC_PW=$(kubectl -n "$NS" exec "$API_POD" -c ragflow-api --   sh -c "cd /ragflow && python3 -c "$ENCRYPT" 'Example-pass-123'" 2>/dev/null | tail -1)
+ENC_PW=$(kubectl -n "$NS" exec "$API_POD" -c ragflow-api --   sh -c "cd /ragflow && python3 -c "$ENCRYPT" 'Example-pass-123'" 2>/dev/null | tail -1 || true)
 if [ -n "$ENC_PW" ]; then
   ok "password RSA-encrypted with image public key"
 else
