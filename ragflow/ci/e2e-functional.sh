@@ -63,11 +63,12 @@ echo "  loaded $REAL into kind"
 kubectl create ns "$NS" >/dev/null 2>&1 || true
 
 section "deploy in-cluster infinity (doc engine)"
-kubectl apply -f - <<'EOF'
+kubectl apply -n "$NS" -f - <<'EOF'
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: infinity
+  namespace: "$NS"
 spec:
   serviceName: infinity
   replicas: 1
@@ -91,6 +92,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: infinity
+  namespace: "$NS"
 spec:
   selector: {app: infinity}
   ports:
@@ -98,21 +100,8 @@ spec:
       port: 23817
       targetPort: 23817
 EOF
-kubectl -n default wait --for=condition=Ready pod -l app=infinity --timeout=300s >/dev/null 2>&1 \
+kubectl -n "$NS" wait --for=condition=Ready pod -l app=infinity --timeout=300s >/dev/null 2>&1 \
   && echo "  infinity Ready" || echo "  infinity NOT ready (continuing; healthz will show doc_engine=nok)"
-# The chart runs in $NS; infinity runs in default ns. The app resolves
-# infinity-func.svc — so create an ExternalName service mapping it.
-kubectl -n "$NS" apply -f - <<EOF
-apiVersion: v1
-kind: Service
-metadata:
-  name: infinity-func
-spec:
-  type: ExternalName
-  externalName: infinity.default.svc.cluster.local
-EOF
-echo "  ExternalName svc infinity-func -> infinity.default.svc"
-
 section "install chart with all built-ins on"
 kubectl create ns "$NS" >/dev/null 2>&1 || true
 kubectl -n "$NS" create secret generic ragflow-creds \
@@ -140,7 +129,7 @@ if ! helm upgrade --install ragflow "$CHART_DIR" -n "$NS" \
   --set valkey.auth.aclUsers.default.passwordKey=REDIS_PASSWORD \
   --set rustfs.enabled=true \
   --set docEngine.type=infinity \
-  --set docEngine.infinity.host=infinity-func.svc \
+  --set docEngine.infinity.host=infinity."$NS".svc.cluster.local \
   --set api.replicaCount=1 \
   --set api.resources.requests.cpu=500m \
   --set api.resources.requests.memory=1Gi \
