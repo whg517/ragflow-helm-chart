@@ -255,17 +255,33 @@ else
 fi
 
 # create knowledge base
+# NOTE: Authorization carries the login JWT; it must survive both shells
+# (host -> pod) intact. We pass it via env and never interpolate inside
+# the remote script. If Bearer form 401s, retry with the bare token —
+# the server accepts both shapes (api/apps/__init__.py:155-165).
 if [ -n "$AUTH" ]; then
   KB=$(kubectl -n "$NS" exec "$API_POD" -c ragflow-api -- env \
-    AUTH="$AUTH" sh -c "
+    AUTH="$AUTH" sh -c '
     curl -s -X POST localhost/api/v1/datasets \
-      -H 'Content-Type: application/json' \
+      -H "Content-Type: application/json" \
       -H "Authorization: Bearer $AUTH" \
-      -d '{\"name\":\"e2e-kb\"}'" || true)
+      -d "{"name":"e2e-kb"}"' || true)
   if printf '%s' "$KB" | grep -q '"code": *0'; then
     ok "knowledge base created (postgres schema + rustfs write path exercised)"
   else
-    bad "dataset create failed: $KB"
+    echo "    bearer-form failed: $KB"
+    KB=$(kubectl -n "$NS" exec "$API_POD" -c ragflow-api -- env \
+      AUTH="$AUTH" sh -c '
+      curl -s -X POST localhost/api/v1/datasets \
+        -H "Content-Type: application/json" \
+        -H "Authorization: $AUTH" \
+        -d "{\"name\":\"e2e-kb\"}"' || true)
+    if printf '%s' "$KB" | grep -q '"code": *0'; then
+      ok "knowledge base created (bare-token auth form)"
+    else
+      bad "dataset create failed: $KB"
+      echo "    (debug) auth token prefix: ${AUTH:0:12}... len=${#AUTH}"
+    fi
   fi
 fi
 
