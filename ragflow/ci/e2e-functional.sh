@@ -63,12 +63,12 @@ echo "  loaded $REAL into kind"
 kubectl create ns "$NS" >/dev/null 2>&1 || true
 
 section "deploy in-cluster infinity (doc engine)"
-kubectl apply -n "$NS" -f - <<'EOF'
+kubectl apply -n "$NS" -f - <<EOF
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: infinity
-  namespace: "$NS"
+  namespace: $NS
 spec:
   serviceName: infinity
   replicas: 1
@@ -92,7 +92,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: infinity
-  namespace: "$NS"
+  namespace: $NS
 spec:
   selector: {app: infinity}
   ports:
