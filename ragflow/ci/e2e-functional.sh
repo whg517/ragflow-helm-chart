@@ -247,6 +247,7 @@ LOGIN=$(kubectl -n "$NS" exec "$API_POD" -c ragflow-api -- sh -c "
     -H 'Content-Type: application/json' \
     -d '{\"email\":\"e2e@test.local\",\"password\":\"$ENC_PW\"}'" || true)
 AUTH=$(printf '%s' "$LOGIN" | grep -i "^authorization:" | head -1 | sed 's/^[Aa]uthorization: *//' | tr -d '\r')
+echo "    token length: ${#AUTH}"
 if [ -n "$AUTH" ]; then
   ok "login ok, Authorization token obtained"
 else
@@ -255,7 +256,8 @@ fi
 
 # create knowledge base
 if [ -n "$AUTH" ]; then
-  KB=$(kubectl -n "$NS" exec "$API_POD" -c ragflow-api -- sh -c "
+  KB=$(kubectl -n "$NS" exec "$API_POD" -c ragflow-api -- env \
+    AUTH="$AUTH" sh -c "
     curl -s -X POST localhost/api/v1/datasets \
       -H 'Content-Type: application/json' \
       -H "Authorization: Bearer $AUTH" \
