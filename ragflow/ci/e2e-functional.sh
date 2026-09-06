@@ -171,9 +171,9 @@ for w in api executor datasync postgres rustfs; do
     done
   fi
 done
-# valkey subchart uses component=primary, not component=valkey.
+# valkey subchart pods carry only name/instance labels (no component).
 if kubectl -n "$NS" wait --for=condition=Ready pod \
-    -l "app.kubernetes.io/component=primary,app.kubernetes.io/name=valkey" \
+    -l "app.kubernetes.io/name=valkey" \
     --timeout=600s >/dev/null 2>&1; then
   ok "valkey Ready"
 else
@@ -208,19 +208,22 @@ section "registration + login + knowledge base creation"
 #   POST /api/v1/datasets       Bearer <access_token> {name}
 # Passwords travel RSA-encrypted with the image's public.pem; we encrypt
 # in-pod with the image's own python (private.pem sits beside it).
-
-ENCRYPT='
-from common.log_utils import *  # noqa
-import base64
+# Write the python payload to a file inside the pod instead of fighting
+# nested quoting in `sh -c "python3 -c \"$ENCRYPT\" ..."` — the inner
+# double quotes in the payload break the outer sh -c quoting and python
+# receives a truncated program.
+ENC_PW=$(kubectl -n "$NS" exec "$API_POD" -c ragflow-api -- sh -c '
+  cat > /tmp/enc_pw.py <<PYEOF
 from Crypto.Cipher import PKCS1_v1_5 as Cipher_PKCS1_v1_5
 from Crypto.PublicKey import RSA
 from pathlib import Path
+import base64, sys
 pub = RSA.importKey(Path("/ragflow/conf/public.pem").read_text())
 cipher = Cipher_PKCS1_v1_5.new(pub)
-import sys
 print(base64.b64encode(cipher.encrypt(sys.argv[1].encode())).decode())
-'
-ENC_PW=$(kubectl -n "$NS" exec "$API_POD" -c ragflow-api --   sh -c "cd /ragflow && python3 -c "$ENCRYPT" 'Example-pass-123'" 2>/dev/null | tail -1 || true)
+PYEOF
+  cd /ragflow && PYTHONPATH=/ragflow python3 /tmp/enc_pw.py "Example-pass-123"
+' 2>/dev/null | tail -1 || true)
 if [ -n "$ENC_PW" ]; then
   ok "password RSA-encrypted with image public key"
 else
