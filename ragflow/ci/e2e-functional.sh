@@ -235,7 +235,7 @@ REG=$(kubectl -n "$NS" exec "$API_POD" -c ragflow-api -- sh -c "
   curl -s -X POST localhost/api/v1/users \
     -H 'Content-Type: application/json' \
     -d '{\"nickname\":\"e2e\",\"email\":\"e2e@test.local\",\"password\":\"$ENC_PW\"}'" || true)
-if printf '%s' "$REG" | grep -q '"code": 0'; then
+if printf '%s' "$REG" | grep -q '"code": *0'; then
   ok "user registered"
 else
   bad "register failed: $REG"
@@ -258,9 +258,9 @@ if [ -n "$AUTH" ]; then
   KB=$(kubectl -n "$NS" exec "$API_POD" -c ragflow-api -- sh -c "
     curl -s -X POST localhost/api/v1/datasets \
       -H 'Content-Type: application/json' \
-      -H 'Authorization: Bearer $AUTH' \
+      -H "Authorization: Bearer $AUTH" \
       -d '{\"name\":\"e2e-kb\"}'" || true)
-  if printf '%s' "$KB" | grep -q '"code": 0'; then
+  if printf '%s' "$KB" | grep -q '"code": *0'; then
     ok "knowledge base created (postgres schema + rustfs write path exercised)"
   else
     bad "dataset create failed: $KB"
