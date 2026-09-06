@@ -80,7 +80,7 @@ spec:
     spec:
       containers:
         - name: infinity
-          image: infiniflow/infinity:v0.7.0
+          image: ${INFINITY_IMAGE:-infiniflow/infinity:v0.7.3-arm64}
           ports:
             - containerPort: 23817
             - containerPort: 23820

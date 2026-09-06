@@ -41,6 +41,9 @@ jobs:
       - name: Run functional e2e against the real image
         env:
           E2E_CLUSTER: ragflow-func
+          # runner is amd64: use the x86-v3 infinity build (matches RAGFlow
+          # v0.27.0's docker-compose pin; sdk==0.7.3 requires server 0.7.3).
+          INFINITY_IMAGE: infiniflow/infinity:v0.7.3-x64-v3
         # Tee to a file so the failure-evidence upload step has real logs.
         run: |
           set -o pipefail
